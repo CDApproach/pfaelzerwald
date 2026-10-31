@@ -1,0 +1,1328 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pfälzerwald Relief</title>
+<meta name="description" content="3D-Relief des Pfälzerwalds aus Laserscan-Daten mit Luftbild, Gesteinsschichten, Bodenprofilen und Burgen.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: full-bleed 3D stage like a museum relief under a spotlight; title plate top-left,
+   field-guide panel on the right (bottom sheet on phones), instrument bar bottom-left. */
+:root {
+  color-scheme: dark;
+  --ink: #13171b;
+  --ink-2: #1b2127;
+  --panel: rgba(21, 26, 31, 0.9);
+  --line: #313a43;
+  --fg: #ebe6dc;
+  --muted: #9aa3a9;
+  --accent: #e3976b;
+  --accent-ink: #2b170c;
+  --f-display: "Cormorant Garamond", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --gl: max(16px, env(safe-area-inset-left, 0px));
+  --gr: max(16px, env(safe-area-inset-right, 0px));
+  --panel-w: 360px;
+}
+html, body { height: 100%; }
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; font-size: 14px; background: var(--ink); color: var(--fg); font-family: var(--f-body); overflow: hidden; -webkit-font-smoothing: antialiased; }
+#stage { position: fixed; inset: 0; background: radial-gradient(ellipse 80% 70% at 42% 40%, #27313b 0%, #182027 55%, #0f1215 100%); }
+#stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+#labels { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+
+/* Title plate */
+.plate { position: fixed; top: calc(14px + env(safe-area-inset-top, 0px)); left: var(--gl); pointer-events: none; max-width: min(440px, calc(100% - var(--panel-w) - 120px)); padding: 12px 16px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: 0 6px 24px rgba(0,0,0,.35); }
+.plate .eyebrow { font: 500 11px/1 var(--f-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.plate h1 { font: 600 clamp(38px, 5.2vw, 64px)/0.95 var(--f-display); letter-spacing: .01em; margin: 6px 0 6px; text-wrap: balance; }
+.plate p { margin: 0; color: #c3c8cb; font-size: 13px; line-height: 1.45; max-width: 46ch; }
+
+/* Compass */
+.mapbtns { position: fixed; right: calc(var(--gr) + var(--panel-w) + 16px); top: calc(14px + env(safe-area-inset-top, 0px)); display: grid; gap: 8px; justify-items: center; }
+.mapbtns button { width: 40px; height: 40px; border: 1px solid var(--line); border-radius: 50%; background: var(--panel); color: var(--fg); font: 500 20px/1 var(--f-body); cursor: pointer; display: grid; place-items: center; padding: 0; backdrop-filter: blur(8px); }
+.mapbtns button:hover { border-color: var(--muted); }
+.mapbtns .compass { width: 46px; height: 46px; }
+.compass .needle { display: grid; place-items: center; }
+.compass svg { width: 30px; height: 30px; }
+.zoom { display: grid; border: 1px solid var(--line); border-radius: 20px; overflow: hidden; background: var(--panel); }
+.zoom button { border: 0; border-radius: 0; background: none; }
+.zoom button + button { border-top: 1px solid var(--line); }
+body.dragging #labels .pin { pointer-events: none; }
+body.dragging #stage canvas { cursor: grabbing; }
+#stage canvas { cursor: grab; }
+
+/* Instrument bar */
+.bar { position: fixed; left: var(--gl); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); max-width: calc(100% - var(--panel-w) - 64px); display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: end; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; backdrop-filter: blur(8px); }
+.ctl { display: grid; gap: 6px; min-width: 0; }
+.ctl label, .ctl .lbl { font: 500 10.5px/1 var(--f-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; gap: 10px; }
+.ctl output { color: var(--fg); font-variant-numeric: tabular-nums; letter-spacing: 0; text-transform: none; }
+.ctl input[type=range] { width: 140px; accent-color: var(--accent); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.seg button { font: 500 12.5px/1 var(--f-body); color: var(--muted); background: transparent; border: 0; padding: 8px 11px; cursor: pointer; }
+.seg button[aria-pressed=true] { background: var(--accent); color: var(--accent-ink); }
+.ctl label.chk { display: flex; justify-content: flex-start; align-items: center; gap: 7px; font: 12.5px/1.2 var(--f-body); letter-spacing: 0; text-transform: none; color: var(--fg); cursor: pointer; }
+.chk input { accent-color: var(--accent); width: 15px; height: 15px; }
+.btn { font: 500 12.5px/1 var(--f-body); color: var(--fg); background: var(--ink-2); border: 1px solid var(--line); border-radius: 7px; padding: 8px 11px; cursor: pointer; }
+.btn:hover, .seg button:hover { color: var(--fg); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.toggle-bar { display: none; }
+
+/* Field guide panel */
+.panel { position: fixed; top: calc(14px + env(safe-area-inset-top, 0px)); right: var(--gr); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); width: var(--panel-w); display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; backdrop-filter: blur(10px); overflow: hidden; }
+.tabs { display: flex; border-bottom: 1px solid var(--line); flex: none; }
+.tabs button { flex: 1; font: 600 12px/1 var(--f-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); background: none; border: 0; padding: 15px 10px 13px; cursor: pointer; border-bottom: 2px solid transparent; }
+.tabs button[aria-selected=true] { color: var(--fg); border-bottom-color: var(--accent); }
+.pbody { overflow-y: auto; padding: 16px 18px 22px; flex: 1; min-height: 0; overscroll-behavior: contain; }
+.pbody h2 { font: 600 26px/1.05 var(--f-display); margin: 0 0 4px; text-wrap: balance; }
+.pbody h3 { font: 500 10.5px/1 var(--f-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: 22px 0 10px; }
+.pbody p { font-size: 13.5px; line-height: 1.55; margin: 0 0 10px; color: var(--fg); }
+.sub { color: var(--muted); font-size: 12.5px; margin: 0 0 14px; }
+.legend { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.legend button { width: 100%; display: grid; grid-template-columns: 26px 1fr auto; gap: 10px; align-items: center; text-align: left; background: none; border: 0; color: var(--fg); padding: 7px 6px; border-radius: 7px; cursor: pointer; font: 13.5px/1.25 var(--f-body); }
+.legend button:hover { background: rgba(255,255,255,.04); }
+.legend button[aria-current=true] { background: rgba(227,151,107,.13); }
+.sw { width: 26px; height: 18px; border-radius: 3px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.35); }
+.legend small { font: 11px/1 var(--f-mono); color: var(--muted); white-space: nowrap; }
+.group-lbl { font: 500 10px/1 var(--f-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); padding: 12px 6px 4px; }
+.back { font: 500 12px/1 var(--f-mono); letter-spacing: .08em; color: var(--muted); background: none; border: 0; padding: 0 0 14px; cursor: pointer; }
+.back:hover { color: var(--fg); }
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0 0 6px; font-size: 13px; }
+.facts dt { font: 500 11px/1.6 var(--f-mono); color: var(--muted); letter-spacing: .04em; }
+.facts dd { margin: 0; line-height: 1.45; }
+.timeline { list-style: none; padding: 0; margin: 0; display: grid; gap: 0; border-left: 1px solid var(--line); margin-left: 4px; }
+.timeline li { position: relative; padding: 0 0 13px 16px; font-size: 13px; line-height: 1.5; }
+.timeline li::before { content: ""; position: absolute; left: -4px; top: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.timeline b { display: block; font: 500 11.5px/1.4 var(--f-mono); color: var(--accent); letter-spacing: .02em; }
+.note { font-size: 12px !important; color: var(--muted) !important; line-height: 1.5 !important; }
+.castles { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.castles button { width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; text-align: left; background: none; border: 0; color: var(--fg); padding: 9px 8px; border-radius: 7px; cursor: pointer; }
+.castles button:hover { background: rgba(255,255,255,.04); }
+.castles .nm { font: 600 18px/1.1 var(--f-display); }
+.castles .pl { font-size: 12px; color: var(--muted); grid-column: 1; }
+.castles .el { font: 12px/1 var(--f-mono); color: var(--muted); grid-row: 1 / span 2; grid-column: 2; align-self: center; font-variant-numeric: tabular-nums; }
+.chip { display: inline-flex; align-items: center; gap: 8px; font: 500 12.5px/1 var(--f-body); color: var(--fg); background: var(--ink-2); border: 1px solid var(--line); border-radius: 999px; padding: 6px 11px 6px 7px; cursor: pointer; }
+.chip .sw { width: 16px; height: 12px; }
+.credits { font-size: 11.5px !important; color: var(--muted) !important; }
+.credits a { color: var(--muted); }
+
+/* 3D labels */
+.pin { position: absolute; left: 0; top: 0; transform: translate(-50%, -100%); pointer-events: auto; cursor: pointer; display: flex; flex-direction: column; align-items: center; background: none; border: 0; padding: 0; color: var(--fg); }
+.pin .tag { font: 600 15px/1 var(--f-display); white-space: nowrap; padding: 3px 7px 4px; border-radius: 4px; background: rgba(15,18,21,.78); border: 1px solid rgba(255,255,255,.12); opacity: 0; transform: translateY(3px); transition: opacity .18s, transform .18s; pointer-events: none; }
+.pin.named .tag, .pin:hover .tag, .pin.sel .tag { opacity: 1; transform: none; }
+.pin .ico { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: #f1e9da; color: #3a2416; box-shadow: 0 1px 4px rgba(0,0,0,.5); margin-top: 3px; }
+.pin.sel .ico { background: var(--accent); color: var(--accent-ink); }
+.pin .stem { width: 1.5px; height: 14px; background: #f1e9da; opacity: .85; }
+.pin svg { width: 13px; height: 13px; }
+.peak, .town { position: absolute; left: 0; top: 0; white-space: nowrap; pointer-events: none; }
+.peak { transform: translate(-50%, -100%); font: 500 11px/1.2 var(--f-mono); color: #fbf6ec; text-shadow: 0 1px 3px rgba(0,0,0,.9); text-align: center; }
+.peak::after { content: "▲"; display: block; font-size: 8px; color: #fbf6ec; }
+.town { transform: translate(-50%, -50%); font: italic 500 15px/1 var(--f-display); color: #b8c0c6; letter-spacing: .03em; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
+.hidden-lbl { display: none !important; }
+#tip { position: fixed; left: 0; top: 0; pointer-events: none; font: 12.5px/1.35 var(--f-body); background: rgba(13,16,19,.92); border: 1px solid var(--line); color: var(--fg); padding: 6px 9px; border-radius: 6px; white-space: nowrap; display: none; z-index: 5; }
+#tip b { font-weight: 600; }
+#tip span { font-family: var(--f-mono); color: var(--muted); font-size: 11.5px; }
+.loading { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none; font: 500 12px/1 var(--f-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.hint { font-size: 11.5px; color: var(--muted); width: 100%; margin: 0; }
+
+@media (max-width: 760px) {
+  :root { --panel-w: 0px; }
+  .plate { max-width: calc(100% - 140px); }
+  .plate h1 { font-size: 34px; }
+  .plate p, .hint { display: none; }
+  .plate { padding: 8px 12px 10px; }
+  .mapbtns { right: var(--gr); top: calc(64px + env(safe-area-inset-top, 0px)); }
+  .panel { top: auto; left: var(--gl); right: var(--gr); width: auto; height: 42%; }
+  .toggle-bar { display: inline-block; position: fixed; top: calc(14px + env(safe-area-inset-top, 0px)); right: var(--gr); }
+  .bar { display: none; left: var(--gl); right: var(--gr); max-width: none; top: calc(60px + env(safe-area-inset-top, 0px)); bottom: auto; }
+  .bar.open { display: flex; }
+  .ctl input[type=range] { width: 120px; }
+}
+@media (prefers-reduced-motion: reduce) { .pin .tag { transition: none; } }
+</style>
+</head>
+<body>
+
+<div id="stage"></div>
+<div id="labels"></div>
+<div class="loading" id="loading">Lade Höhenmodell …</div>
+
+<header class="plate">
+  <div class="eyebrow">Relief · 49,0–49,6° N · 7,5–8,2° O</div>
+  <h1>Pfälzerwald</h1>
+  <p>Größtes zusammenhängendes Buntsandstein-Gebiet Deutschlands, ausgeschnitten an der Grenze des Naturraums. Gelände aus Laserscan-Daten, Schnittkanten mit dem Gesteinsaufbau bis 600 m unter dem Meeresspiegel.</p>
+</header>
+
+<div class="mapbtns">
+  <button class="compass" id="compassBtn" title="Nach Norden ausrichten" aria-label="Nach Norden ausrichten"><span class="needle" id="needle"><svg viewBox="0 0 30 30" aria-hidden="true"><path d="M15 3 L19 15 L15 13 L11 15 Z" fill="#e3976b"/><path d="M15 27 L19 15 L15 17 L11 15 Z" fill="#6b747b"/></svg></span></button>
+  <div class="zoom"><button id="zoomIn" title="Hineinzoomen" aria-label="Hineinzoomen">+</button><button id="zoomOut" title="Herauszoomen" aria-label="Herauszoomen">−</button></div>
+</div>
+
+<button class="btn toggle-bar" id="toggleBar" aria-expanded="false" aria-controls="bar">Ansicht</button>
+<div class="bar" id="bar">
+  <div class="ctl">
+    <span class="lbl">Oberfläche</span>
+    <div class="seg" role="group" aria-label="Oberfläche">
+      <button id="modeRelief" aria-pressed="true">Relief</button>
+      <button id="modeGeo" aria-pressed="false">Geologie</button>
+    </div>
+  </div>
+  <div class="ctl"><label for="sunAz">Sonne <output id="sunAzOut">NW</output></label><input id="sunAz" type="range" min="0" max="360" step="1" value="315"></div>
+  <div class="ctl"><label for="sunEl">Sonnenhöhe <output id="sunElOut">30°</output></label><input id="sunEl" type="range" min="6" max="70" step="1" value="30"></div>
+  <div class="ctl"><label for="exag">Überhöhung <output id="exagOut">3,0×</output></label><input id="exag" type="range" min="1" max="6" step="0.1" value="3"></div>
+  <div class="ctl"><label for="cut">Schnitt von Süden <output id="cutOut">aus</output></label><input id="cut" type="range" min="0" max="100" step="0.5" value="0"></div>
+  <div class="ctl" style="gap:7px">
+    <label class="chk" for="showSat"><input id="showSat" type="checkbox"> Luftbild</label>
+    <label class="chk" for="showCastles"><input id="showCastles" type="checkbox" checked> Burgen</label>
+    <label class="chk" for="showNames"><input id="showNames" type="checkbox" checked> Gipfel &amp; Orte</label>
+  </div>
+  <button class="btn" id="resetView">Ansicht zurücksetzen</button>
+  <p class="hint">Gelände und Luftbild: ©GeoBasis-DE / LVermGeoRP, dl-de/by-2-0 · © OpenStreetMap-Mitwirkende</p>
+  <p class="hint">Ziehen verschiebt · Rechte Maustaste oder Umschalt + Ziehen dreht und neigt · Scrollen oder Doppelklick zoomt · Klick auf Gestein oder Burg zeigt Infos</p>
+</div>
+
+<aside class="panel" aria-label="Infos">
+  <div class="tabs" role="tablist">
+    <button role="tab" id="tabLayers" aria-selected="true">Schichten</button>
+    <button role="tab" id="tabCastles" aria-selected="false">Burgen</button>
+  </div>
+  <div class="pbody" id="pbody"></div>
+</aside>
+<div id="tip"></div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+/* ---------- content ---------- */
+const LAYERS = [
+  { id: 0, ts: 'Fundament', name: 'Kristallines Grundgebirge', short: 'Grundgebirge', color: '#7b7c9a', group: 'Erdaltertum',
+    age: 'älter als 300 Mio. Jahre (Devon/Karbon)', thick: 'Fundament, mehrere Kilometer tief',
+    material: 'Gneise und Schiefer, durchsetzt von Tiefengesteinen wie Granit.',
+    props: 'Sehr hart, dicht und kaum porös. Wasser fließt nur auf Klüften. Wird als Schotter und Splitt abgebaut.',
+    origin: 'Die Wurzel des Variszischen Gebirges. Es entstand vor rund 350 bis 300 Mio. Jahren, als zwei Kontinente kollidierten, und wurde danach fast vollständig abgetragen.',
+    where: 'Nur an wenigen Stellen am Ostrand sichtbar, etwa im Gneis-Steinbruch bei Albersweiler im Queichtal.' },
+  { id: 1, ts: 'bis >1000 m', name: 'Rotliegend', short: 'Rotliegend', color: '#8d4e43', group: 'Perm',
+    age: 'Perm, ca. 300–260 Mio. Jahre', thick: 'bei Albersweiler nur wenige Zehner Meter, meist einige hundert Meter, nach Norden zum Saar-Nahe-Becken weit über 1000 m',
+    material: 'Rote Sand-, Schluff- und Tonsteine und grobe Konglomerate; im Nordpfälzer Bergland auch vulkanische Gesteine.',
+    props: 'Weicher als Buntsandstein und lehmig verwitternd. Bildet breite Talböden und flache Hochflächen mit fruchtbareren Böden.',
+    origin: 'Schutt des abgetragenen Variszischen Gebirges, den Flüsse unter heißem, wechselfeuchtem Klima in Senken und Seen spülten. Gleichzeitig war das Gebiet vulkanisch aktiv.',
+    where: 'Breite Täler und Hochflächen im Stumpfwald im Norden und im Südosten um Annweiler.' },
+  { id: 2, ts: '80–100 m', name: 'Zechstein', short: 'Zechstein', color: '#8f88a8', group: 'Perm',
+    age: 'Oberes Perm, ca. 258–252 Mio. Jahre', thick: 'ca. 80–100 m',
+    material: 'In der Pfalz vor allem rote Sand-, Schluff- und Tonsteine mit dünnen Dolomitlagen. Der „Annweiler Sandstein“ wird heute ebenfalls zum Zechstein gezählt.',
+    props: 'Weicher als der Buntsandstein darüber. Tonige Lagen stauen Sickerwasser, deshalb treten an ihrer Oberkante oft Quellen aus.',
+    origin: 'Weiter im Norden lag das Zechsteinmeer, in dem mächtige Salzlager entstanden. Die Pfalz lag an seinem Rand: Flüsse und flache Küstenebenen lagerten hier Sand und Schlamm ab.',
+    where: 'Unterhänge im Südosten (Queichtal bei Annweiler) und im nördlichen Stumpfwald.' },
+  { id: 3, ts: '≈ 100 m', name: 'Trifels-Schichten', short: 'Trifels-Schichten', color: '#c9724f', group: 'Unterer Buntsandstein',
+    age: 'Untere Trias, ca. 252–250 Mio. Jahre', thick: 'ca. 100 m',
+    material: 'Mittel- bis grobkörniger, deutlich schräggeschichteter Sandstein in mächtigen, gleichförmigen Bänken (Felszone). Die rote Farbe stammt von feinen Häutchen aus Eisenoxid (Hämatit) um die Quarzkörner.',
+    props: 'Hart und massig: Daraus bestehen die großen Felstürme des Wasgaus. Trifels, Anebos und Münz sowie Rehberg und Orensberg sind Reste dieser Schicht. Gut durchlässig und ein wichtiger Grundwasserspeicher.',
+    origin: 'Sande, die Flüsse vor rund 250 Mio. Jahren in einem großen, trockenen Becken ablagerten. Die Schrägschichtung zeigt noch heute, in welche Richtung das Wasser floss.',
+    where: 'Felsenland um Dahn und Annweiler, viele Burgfelsen im Wasgau.' },
+  { id: 4, ts: '120–140 m', name: 'Rehberg-Schichten', short: 'Rehberg-Schichten', color: '#d9946b', group: 'Unterer Buntsandstein',
+    age: 'Untere Trias', thick: 'ca. 120–140 m',
+    material: 'Wechsel aus schräggeschichteten Felsbänken und feineren, eben geschichteten Sandsteinlagen. Quarzreich, arm an Feldspat und Glimmer.',
+    props: 'Die festen Bänke bilden Felsriffe und Mauern, die feineren Lagen dazwischen verwittern schneller. So entstehen gestufte Hänge und viele der bizarren Felsformen.',
+    origin: 'Ablagerungen verflochtener Flüsse in einem heißen, wüstenhaften Becken. Stellenweise blies der Wind Dünen auf.',
+    where: 'Hänge und Kämme im ganzen Pfälzerwald, im Modell die häufigste Schicht an der Oberfläche.' },
+  { id: 5, ts: '60–80 m', name: 'Schlossberg-Schichten', short: 'Schlossberg-Schichten', color: '#e6b48a', group: 'Unterer Buntsandstein',
+    age: 'Untere Trias', thick: 'ca. 60–80 m',
+    material: 'Fein- bis mittelkörniger, meist dünnbankiger roter Sandstein mit dünnen Ton- und Schlufflagen.',
+    props: 'Weniger fest als die Felszonen. Zerfällt leichter zu Platten und Grus und bildet eher gleichmäßige, bewaldete Hänge.',
+    origin: 'Feinere Sande, die bei nachlassender Strömung in Flussrinnen und flachen Senken liegen blieben.',
+    where: 'Obere Hanglagen im Zentrum des Gebirges.' },
+  { id: 6, ts: '80–100 m', name: 'Karlstal-Schichten', short: 'Karlstal-Schichten', color: '#b0503f', group: 'Mittlerer Buntsandstein',
+    age: 'Untere Trias', thick: 'ca. 80–100 m',
+    material: 'Mittel- bis grobkörniger roter Sandstein, oft verkieselt und sehr hart; dazu die Obere Felszone und das Hauptkonglomerat mit Geröllen aus Quarz und Quarzit. Den Abschluss bildet eine violette Grenzschicht aus glimmerreichem Feinmaterial.',
+    props: 'Sehr verwitterungsbeständig: bildet Felskanten, Steilstufen und die Kuppen vieler hoher Berge. Klüftig und porös, deshalb neben den Trifels-Schichten der wichtigste Grundwasserspeicher.',
+    origin: 'Grobe Sande und Kiese, die Flüsse bei Starkregen aus dem Umland in das trockene Becken schütteten. Gelöste Kieselsäure im Porenwasser verkittete den Sand später zu besonders hartem Gestein.',
+    where: 'Hohe Rücken des mittleren Pfälzerwalds und die Ränder der westlichen Hochflächen.' },
+  { id: 7, ts: '≈ 100 m', name: 'Oberer Buntsandstein', short: 'Oberer Buntsandstein', color: '#cdb391', group: 'Oberer Buntsandstein',
+    age: 'Untere/Mittlere Trias, bis ca. 243 Mio. Jahre', thick: 'ca. 100 m, im Gebiet meist abgetragen',
+    material: 'Feinkörnige, glimmerreiche Sandsteine mit Ton- und Karbonatlagen: die „Zwischenschichten“ und darüber der Voltziensandstein.',
+    props: 'Weicher und toniger als die Sandsteine darunter. Verwittert zu lehmigeren, nährstoffreicheren Böden, die sich für Ackerbau eignen.',
+    origin: 'Abgelagert in weiten Flussebenen am Ende der Buntsandstein-Zeit, kurz bevor das Muschelkalk-Meer das Gebiet überflutete. Der Name Voltziensandstein geht auf die Nadelbaum-Gattung Voltzia zurück, deren Reste darin vorkommen.',
+    where: 'Hochflächen im Westen, etwa im Pfälzischen Holzland bei Pirmasens. Dort liegen Rodungsinseln mit Feldern mitten im Wald.' },
+  { id: 8, ts: '0,5–1,5 m', name: 'Podsol und podsolige Braunerde', short: 'Podsol', color: '#b9b4aa', group: 'Boden', soil: true,
+    age: 'seit dem Ende der letzten Eiszeit, gut 10.000 Jahre', thick: 'meist 0,5–1,5 m (im Modell stark überhöht)',
+    material: 'Sandig und steinig, sehr sauer (pH etwa 3 bis 4,5). Profil von oben: Streu und Rohhumus, dunkler humoser Oberboden, ein ausgebleichter grauweißer Horizont und darunter ein rostbraun-schwarzer Anreicherungshorizont.',
+    props: 'Nährstoffarm, sehr wasserdurchlässig und schnell trocken. Für Ackerbau kaum geeignet. Deshalb ist der Pfälzerwald bis heute fast geschlossen bewaldet, vor allem mit Buche und Kiefer.',
+    origin: 'Aus verwittertem Sandstein und eiszeitlichem Hangschutt. Säuren aus der Laub- und Nadelstreu lösen Eisen und Humus im Oberboden und verlagern sie nach unten. Zurück bleibt der gebleichte Horizont.',
+    where: 'Auf fast allen Buntsandstein-Flächen.' },
+  { id: 9, ts: '0,5–1,5 m', name: 'Braunerde (lehmig)', short: 'Braunerde', color: '#8a6640', group: 'Boden', soil: true,
+    age: 'seit dem Ende der letzten Eiszeit, gut 10.000 Jahre', thick: 'meist 0,5–1,5 m (im Modell stark überhöht)',
+    material: 'Lehmiger Sand bis sandiger Lehm, gleichmäßig braun gefärbt durch Eisenoxide.',
+    props: 'Hält Wasser und Nährstoffe deutlich besser als die Sandböden. Gerodete Flächen werden als Acker und Wiese genutzt.',
+    origin: 'Verwitterung ton- und glimmerreicherer Gesteine (Rotliegend, Zechstein, Oberer Buntsandstein, Grundgebirge). Dabei werden Eisenminerale zu braunen Oxiden umgewandelt („Verbraunung“) und neue Tonminerale gebildet.',
+    where: 'Hochflächen im Westen, Talböden und Unterhänge im Norden und Südosten.' },
+];
+
+const HISTORY = [
+  ['vor 350–300 Mio. Jahren', 'Das Variszische Gebirge entsteht. Seine Wurzeln bilden heute das Grundgebirge.'],
+  ['300–252 Mio.', 'Perm: Das Gebirge wird abgetragen, sein Schutt füllt Senken (Rotliegend). Vulkane sind aktiv. Am Ende reicht das Zechsteinmeer bis an den Rand der Pfalz.'],
+  ['252–243 Mio.', 'Buntsandstein: In einem heißen, trockenen Becken lagern Flüsse und Wind bis zu 500 m Sand ab.'],
+  ['243–ca. 150 Mio.', 'Meere und Flussebenen bedecken das Gebiet. Muschelkalk, Keuper und Jura lagern sich darüber.'],
+  ['vor 53 Mio.', 'Am Pechsteinkopf bei Forst steigt Magma auf und bildet einen kleinen Vulkan mit Basaltsäulen.'],
+  ['ab ca. 35 Mio.', 'Der Oberrheingraben bricht ein. Seine Schulter mit dem Pfälzerwald hebt sich um rund 1000 m. Etwa 800 m jüngere Schichten werden abgetragen, der Buntsandstein kommt an die Oberfläche.'],
+  ['letzte 2,6 Mio.', 'Eiszeiten: Frost sprengt den Sandstein, Flüsse schneiden tiefe Täler ein und präparieren die Felsen heraus.'],
+];
+
+const CASTLES = [
+  { name: 'Reichsburg Trifels', place: 'Annweiler am Trifels', ele: 479, lat: 49.19632, lon: 7.97843,
+    lead: 'Die berühmteste Burg der Pfalz thront auf einem dreigeteilten Buntsandstein-Felsen über dem Queichtal.',
+    facts: [['1081', 'Erste Erwähnung in einer Schenkungsurkunde.'], ['1113', 'Wird Reichsburg.'], ['1125–1298', 'Mehrfach Aufbewahrungsort der Reichskleinodien (Krone, Zepter, Reichsapfel).'], ['1193', 'Der englische König Richard Löwenherz wird hier gefangen gehalten; frei kommt er erst im Februar 1194 gegen hohes Lösegeld.'], ['1602', 'Brand nach Blitzschlag, 1635 aufgegeben.'], ['1938–1966', 'Wiederaufbau mit Palas und Bergfried.']] },
+  { name: 'Burg Berwartstein', place: 'Erlenbach bei Dahn', ele: 277, lat: 49.10828, lon: 7.86268,
+    lead: 'Eine Felsenburg, die zu großen Teilen in den Sandstein gehauen ist, mit einem 75 m tiefen Brunnenschacht.',
+    facts: [['1152', 'Kaiser Friedrich Barbarossa schenkt die Burg dem Bischof von Speyer.'], ['1480', 'Kurfürst Philipp gibt sie Hans von Trotha („Hans Trapp“).'], ['1485', 'Trotha staut die Wieslauter und setzt Weißenburg unter Wasser („Wasserfehde“).'], ['1590', 'Brand nach Blitzschlag, danach Ruine.'], ['1893–1895', 'Wiederaufbau durch Theodor von Baginski.'], ['heute', 'Bewohnt, mit Burgschänke im Rittersaal.']] },
+  { name: 'Dahner Burgengruppe', place: 'Dahn', ele: 323, lat: 49.15016, lon: 7.80246,
+    lead: 'Drei Burgen nebeneinander auf einem Felsrücken, verteilt auf fünf Sandsteinfelsen.',
+    facts: [['Anfang 12. Jh.', 'Tanstein, die älteste der drei Burgen.'], ['Anfang 13. Jh.', 'Altdahn.'], ['Ende 13. Jh.', 'Grafendahn.'], ['Erbauer', 'Mehrere Generationen der Ritter von Dahn.']] },
+  { name: 'Hambacher Schloss', place: 'Neustadt-Hambach', ele: 376, lat: 49.32512, lon: 8.11797,
+    lead: 'Die „Wiege der deutschen Demokratie“ am Rand der Haardt.',
+    facts: [['11. Jh.', 'Als Kästenburg der Salier errichtet, danach im Besitz des Hochstifts Speyer.'], ['1552', 'Von Truppen des Markgrafen Albrecht Alcibiades niedergebrannt.'], ['1832', 'Hambacher Fest ab dem 27. Mai: rund 25.000 Menschen fordern Freiheit und Einheit, Schwarz-Rot-Gold weht über der Ruine.'], ['1842', 'Hochzeitsgeschenk an Kronprinz Maximilian von Bayern, daher der Name „Maxburg“.']] },
+  { name: 'Madenburg', place: 'Eschbach', ele: 458, lat: 49.16819, lon: 8.00807,
+    lead: 'Eine der größten und ältesten Burganlagen der Pfalz, mit Blick weit in die Rheinebene.',
+    facts: [['1176', 'Erste sichere Erwähnung.'], ['13. Jh.', 'Die Grafen von Leiningen verwalten sie als Reichsvögte.'], ['1516', 'Der Bischof von Speyer kauft die Burg.'], ['1689', 'Im Pfälzischen Erbfolgekrieg von französischen Truppen endgültig zerstört.']] },
+  { name: 'Hardenburg', place: 'Bad Dürkheim', ele: 200, lat: 49.46216, lon: 8.122,
+    lead: 'Mit 180 × 90 m eine der mächtigsten Burgen der Pfalz, später zur Festung ausgebaut.',
+    facts: [['1205–1214', 'Erbaut von Graf Friedrich II. von Leiningen.'], ['um 1500', 'Ausbau zur Festung gegen Artillerie.'], ['1794', 'Französische Revolutionstruppen setzen sie in Brand.']] },
+  { name: 'Wegelnburg', place: 'Nothweiler', ele: 571, lat: 49.06139, lon: 7.78705,
+    lead: 'Die höchstgelegene Burg der Pfalz, direkt an der Grenze zum Elsass.',
+    facts: [['1247', 'Erste Erwähnung als Lehen an Friedrich III. von Leiningen.'], ['14. Jh.', 'In Reichsbesitz, verwaltet von Reichsministerialen.'], ['1679', 'Nach dem Frieden von Nimwegen von französischen Truppen geschleift.']] },
+  { name: 'Burg Lindelbrunn', place: 'Vorderweidenthal', ele: 438, lat: 49.14452, lon: 7.8964,
+    lead: 'Felsenburg mit Rundumblick, vermutlich als Reichsburg zum Schutz des Trifels gebaut.',
+    facts: [['um 1150', 'Erbaut.'], ['1274', 'König Rudolf von Habsburg gibt sie den Grafen von Leiningen.'], ['1525', 'Im Bauernkrieg vom Kleeburger Haufen niedergebrannt.']] },
+  { name: 'Burg Drachenfels', place: 'Busenberg', ele: 368, lat: 49.12216, lon: 7.82778,
+    lead: 'Felsenburg auf einem rund 150 m langen Sandsteinriff; ein Turmrest heißt „Backenzahn“.',
+    facts: [['1245', 'Erste Erwähnung (Walter von Drachenfels).'], ['ab 1344', 'Ganerbenburg mit vielen Mitbesitzern.'], ['1510', 'Franz von Sickingen erwirbt einen Anteil.'], ['1523', 'Nach Sickingens Niederlage am 10. Mai zerstört, Wiederaufbau verboten.']] },
+  { name: 'Burg Landeck', place: 'Klingenmünster', ele: 305, lat: 49.14105, lon: 8.00619,
+    lead: 'Ihr rund 25 m hoher Bergfried ist der höchste vollständig erhaltene der Pfalz.',
+    facts: [['um 1200', 'Erbaut; erste Erwähnung 1237.'], ['1290', 'Teilung zwischen den Herren von Ochsenstein und den Grafen von Zweibrücken-Bitsch.'], ['1680/1689', 'Von französischen Truppen zerstört.']] },
+  { name: 'Burg Gräfenstein', place: 'Merzalben', ele: 436, lat: 49.24113, lon: 7.75661,
+    lead: 'Besitzt den einzigen siebeneckigen Bergfried Deutschlands (17 m).',
+    facts: [['12. Jh.', 'Kernburg aus der Stauferzeit; erste Erwähnung 1237.'], ['1367', 'Kurfürst Ruprecht I. kauft sieben Achtel der Burg.'], ['1635', 'Im Dreißigjährigen Krieg durch Unachtsamkeit kaiserlicher Truppen abgebrannt.']] },
+  { name: 'Burg Neuscharfeneck', place: 'Flemlingen / Ramberg', ele: 499, lat: 49.25269, lon: 8.02165,
+    lead: 'Berühmt für ihre gewaltige Schildmauer: 58 m lang und 12 m dick.',
+    facts: [['13. Jh.', 'Erste Burg; die Schildmauer entsteht wohl im 13. Jh.'], ['1416', 'Geht an die Kurfürsten von der Pfalz.'], ['1633', 'Vermutlich von schwedischen Truppen gesprengt.']] },
+];
+const PEAKS = [['Kalmit', 673, 49.31892, 8.08262], ['Roßberg', 637, 49.26177, 8.02966], ['Weißenberg', 610, 49.25268, 7.82567], ['Eschkopf', 608, 49.31029, 7.85384], ['Rehberg', 577, 49.1817, 7.97008]];
+const TOWNS = [['Kaiserslautern', 49.44322, 7.769], ['Pirmasens', 49.1997, 7.60878], ['Neustadt', 49.35361, 8.15], ['Landau', 49.19828, 8.11234], ['Bad Dürkheim', 49.4633, 8.18], ['Landstuhl', 49.41433, 7.55], ['Wissembourg', 49.03659, 7.94451], ['Bad Bergzabern', 49.10281, 8.02]];
+
+/* ---------- geology model (mirrored in GLSL) ---------- */
+// Base of the Buntsandstein: dips west, domed up around Albersweiler, rises toward the Nordpfälzer Bergland.
+function baseB(x, z) { const dx = x - 13.5, dz = z - 10.5; return 120 + 6 * x + 230 * Math.exp(-(dx * dx + dz * dz) / 288) + 14 * Math.max(0, -z - 8); }
+function rotlT(x, z) { const dx = x - 13.5, dz = z - 10.5; return 250 + Math.max(0, -z) * 40 + Math.max(0, -x) * 8 - 180 * Math.exp(-(dx * dx + dz * dz) / 98); }
+function layerAt(x, z, h) {
+  const B = baseB(x, z);
+  if (h >= B + 390) return 7; if (h >= B + 300) return 6; if (h >= B + 230) return 5; if (h >= B + 100) return 4;
+  if (h >= B) return 3; if (h >= B - 90) return 2; if (h >= B - 90 - rotlT(x, z)) return 1; return 0;
+}
+const soilOf = L => (L === 0 || L === 1 || L === 2 || L === 7) ? 9 : 8;
+
+const GEO_GLSL = /* glsl */`
+float baseB(vec2 p){ vec2 d=p-vec2(13.5,10.5); return 120.0+6.0*p.x+230.0*exp(-dot(d,d)/288.0)+14.0*max(0.0,-p.y-8.0); }
+float rotlT(vec2 p){ vec2 d=p-vec2(13.5,10.5); return 250.0+max(0.0,-p.y)*40.0+max(0.0,-p.x)*8.0-180.0*exp(-dot(d,d)/98.0); }
+int layerAt(vec2 p,float h){ float B=baseB(p);
+  if(h>=B+390.0)return 7; if(h>=B+300.0)return 6; if(h>=B+230.0)return 5; if(h>=B+100.0)return 4;
+  if(h>=B)return 3; if(h>=B-90.0)return 2; if(h>=B-90.0-rotlT(p))return 1; return 0; }
+float boundaryDist(vec2 p,float h){ float B=baseB(p); float d=abs(h-B);
+  d=min(d,abs(h-B-100.0)); d=min(d,abs(h-B-230.0)); d=min(d,abs(h-B-300.0)); d=min(d,abs(h-B-390.0));
+  d=min(d,abs(h-B+90.0)); d=min(d,abs(h-B+90.0+rotlT(p))); return d; }
+int soilOf(int L){ return (L==0||L==1||L==2||L==7)?9:8; }
+bool selMatch(int L,int sel){ if(sel<0)return false; if(sel<8)return L==sel; return soilOf(L)==sel; }
+`;
+
+/* ---------- constants ---------- */
+const BASE_M = -600;       // block bottom, metres a.s.l.
+const SOIL_DISP = 0.045;   // soil band thickness on the walls, display km
+const WALL_STEP = 0.02;    // wall sampling along the boundary, km
+const MAX_LOADS = 6, CACHE_MAX = innerWidth <= 760 ? 60 : 110;
+const $ = s => document.querySelector(s);
+
+/* ---------- load metadata ---------- */
+const meta = await (await fetch('meta.json')).json();
+const tinfo = await (await fetch('terrain/tiles.json')).json();
+const { lon0, lat0, kmPerDeg, cosLat } = meta;
+const ROOT = tinfo.root, TN = tinfo.n, LMAX = tinfo.lmax, R0 = -ROOT / 2;
+const proj = (lat, lon) => [(lon - lon0) * kmPerDeg * cosLat, -(lat - lat0) * kmPerDeg];
+
+// boundary polygon (km) with edges bucketed by z for fast scanlines and inside tests
+const poly = meta.boundary.slice(0, -1);
+const NP = poly.length;
+let pxMin = 1e9, pxMax = -1e9, pzMin = 1e9, pzMax = -1e9;
+for (const [x, z] of poly) { pxMin = Math.min(pxMin, x); pxMax = Math.max(pxMax, x); pzMin = Math.min(pzMin, z); pzMax = Math.max(pzMax, z); }
+const BUCKET = 0.5, buckets = [];
+for (let k = 0; k < NP; k++) {
+  const a = poly[k], b = poly[(k + 1) % NP];
+  const lo = Math.floor((Math.min(a[1], b[1]) - pzMin) / BUCKET), hi = Math.floor((Math.max(a[1], b[1]) - pzMin) / BUCKET);
+  for (let q = lo; q <= hi; q++) (buckets[q] ||= []).push(k);
+}
+function crossings(zc, out) {
+  out.length = 0;
+  const q = Math.floor((zc - pzMin) / BUCKET), list = buckets[q];
+  if (!list) return out;
+  for (const k of list) {
+    const a = poly[k], b = poly[(k + 1) % NP];
+    if ((a[1] > zc) !== (b[1] > zc)) out.push(a[0] + (zc - a[1]) / (b[1] - a[1]) * (b[0] - a[0]));
+  }
+  return out.sort((p, r) => p - r);
+}
+const _xs = [];
+function insidePoly(x, z) {
+  if (z <= pzMin || z >= pzMax || x <= pxMin || x >= pxMax) return false;
+  crossings(z, _xs); let c = 0; for (const v of _xs) if (v < x) c++; return (c & 1) === 1;
+}
+// anti-aliased polygon coverage on a regular grid; pixel p is centred at o + p*d
+function coverage(ox, oz, d, n) {
+  const M = new Float32Array(n * n), SUB = 4, xs = [];
+  for (let j = 0; j < n; j++) for (let s = 0; s < SUB; s++) {
+    const zc = oz + (j - 0.5 + (s + 0.5) / SUB) * d;
+    crossings(zc, xs);
+    const row = j * n;
+    for (let k = 0; k + 1 < xs.length; k += 2) {
+      let pa = (xs[k] - ox) / d + 0.5, pb = (xs[k + 1] - ox) / d + 0.5;
+      pa = Math.max(0, pa); pb = Math.min(n, pb); if (pb <= pa) continue;
+      const ia = Math.floor(pa), ib = Math.floor(pb);
+      if (ia === ib) { M[row + ia] += (pb - pa) / SUB; continue; }
+      M[row + ia] += (ia + 1 - pa) / SUB;
+      for (let i = ia + 1; i < ib; i++) M[row + i] += 1 / SUB;
+      if (ib < n) M[row + ib] += (pb - ib) / SUB;
+    }
+  }
+  return M;
+}
+
+/* ---------- height images ---------- */
+const decodeCanvas = document.createElement('canvas');
+const decodeCtx = decodeCanvas.getContext('2d', { willReadFrequently: true });
+async function loadHeights(url) {
+  const blob = await (await fetch(url)).blob();
+  let bmp;
+  try { bmp = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' }); }
+  catch { bmp = await createImageBitmap(blob); }
+  const w = bmp.width, h = bmp.height;
+  if (decodeCanvas.width !== w || decodeCanvas.height !== h) { decodeCanvas.width = w; decodeCanvas.height = h; }
+  decodeCtx.drawImage(bmp, 0, 0); bmp.close?.();
+  const px = decodeCtx.getImageData(0, 0, w, h).data, out = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) out[i] = (px[i * 4] * 256 + px[i * 4 + 1]) / 50 - 100;
+  return { data: out, w, h };
+}
+
+/* ---------- renderer ---------- */
+const stage = $('#stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setClearColor(0x000000, 0);
+renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+stage.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(32, 1, 0.05, 2000);
+const floatLinear = renderer.extensions.has('OES_texture_float_linear');
+
+function floatTex(arr, n, offset = 0) {
+  let data, type;
+  if (floatLinear) { data = offset ? arr.map(v => v - offset) : arr; type = THREE.FloatType; }
+  else { data = new Uint16Array(arr.length); const f = THREE.DataUtils.toHalfFloat; for (let i = 0; i < arr.length; i++) data[i] = f(arr[i] - offset); type = THREE.HalfFloatType; }
+  const t = new THREE.DataTexture(data, n, n, THREE.RedFormat, type);
+  t.minFilter = t.magFilter = THREE.LinearFilter; t.generateMipmaps = false; t.unpackAlignment = 1; t.needsUpdate = true; return t;
+}
+function maskTex(M, n) {
+  const b = new Uint8Array(M.length); for (let i = 0; i < M.length; i++) b[i] = Math.min(255, Math.round(M[i] * 255));
+  const t = new THREE.DataTexture(b, n, n, THREE.RedFormat, THREE.UnsignedByteType);
+  t.minFilter = t.magFilter = THREE.LinearFilter; t.generateMipmaps = false; t.unpackAlignment = 1; t.needsUpdate = true; return t;
+}
+
+// overview grid (62.5 m) used for cast shadows and ambient occlusion
+const ov = await loadHeights('terrain/overview.webp');
+const OVN = ov.w, OVD = ROOT / (OVN - 3);
+let maxH = 0; for (const v of ov.data) maxH = Math.max(maxH, v);
+maxH += 15;
+const ovTex = floatTex(ov.data, OVN), ovMask = maskTex(coverage(R0 - OVD, R0 - OVD, OVD, OVN), OVN);
+
+const layerCols = LAYERS.map(l => new THREE.Color(l.color));
+const U = {
+  uOv: { value: ovTex }, uOvM: { value: ovMask }, uOvG: { value: new THREE.Vector2(R0 - OVD, OVD) }, uOvN: { value: OVN },
+  uEx: { value: 3 }, uCut: { value: 1e6 }, uMaxY: { value: 1 }, uBaseY: { value: -1.8 },
+  uSun: { value: new THREE.Vector3() }, uMode: { value: 0 }, uSel: { value: -1 }, uSatOn: { value: 0 },
+  uLayerCol: { value: layerCols }, uFog: { value: new THREE.Color('#1a2128') },
+};
+const blankTex = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1); blankTex.needsUpdate = true;
+const maxAniso = renderer.capabilities.getMaxAnisotropy();
+const COMMON = /* glsl */`
+#define SOIL_DISP ${SOIL_DISP.toFixed(4)}
+uniform sampler2D uOv; uniform sampler2D uOvM; uniform vec2 uOvG; uniform float uOvN;
+uniform float uEx, uCut, uMaxY, uBaseY; uniform vec3 uSun; uniform int uMode, uSel;
+uniform vec3 uLayerCol[10]; uniform vec3 uFog;
+vec2 ovUV(vec2 xz){ return ((xz-uOvG.x)/uOvG.y+0.5)/uOvN; }
+float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+float vnoise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+  return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }
+${GEO_GLSL}
+`;
+
+/* ---------- terrain tiles (quadtree, level of detail) ---------- */
+const TILE_VS = COMMON + /* glsl */`
+  uniform sampler2D uT; uniform vec4 uTile; uniform float uHOff;
+  attribute float aSkirt; varying vec3 vW; varying vec2 vL; varying float vH;
+  void main(){
+    vec2 uv=position.xz;
+    float h=texelFetch(uT,ivec2(round(uv*${TN}.0))+1,0).r+uHOff;
+    vec3 p=vec3(uTile.x+uv.x*uTile.z, h*0.001*uEx-aSkirt*uTile.z*0.012, uTile.y+uv.y*uTile.z);
+    vW=p; vL=uv; vH=h;
+    gl_Position=projectionMatrix*viewMatrix*vec4(p,1.0);
+  }`;
+const TILE_FS = COMMON + /* glsl */`
+  uniform sampler2D uT; uniform sampler2D uM; uniform vec4 uTile; uniform float uHOff;
+  uniform sampler2D uSat; uniform float uHasSat, uSatOn; uniform vec4 uSatXf;
+  varying vec3 vW; varying vec2 vL; varying float vH;
+  vec3 hypso(float h){
+    vec3 c0=vec3(0.40,0.53,0.50), c1=vec3(0.56,0.65,0.50), c2=vec3(0.74,0.75,0.56), c3=vec3(0.87,0.82,0.64), c4=vec3(0.97,0.93,0.85);
+    if(h<240.0) return mix(c0,c1,clamp((h-110.0)/130.0,0.0,1.0));
+    if(h<380.0) return mix(c1,c2,(h-240.0)/140.0);
+    if(h<510.0) return mix(c2,c3,(h-380.0)/130.0);
+    return mix(c3,c4,clamp((h-510.0)/160.0,0.0,1.0));
+  }
+  float shadowT(vec3 p){
+    float res=1.0, t=0.06;
+    for(int i=0;i<56;i++){
+      vec3 q=p+uSun*t;
+      if(q.y>uMaxY) break;
+      vec2 uv=ovUV(q.xz);
+      if(uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0) break;
+      float hq=(texture(uOvM,uv).r<0.5||q.z>uCut)? -100.0 : texture(uOv,uv).r*0.001*uEx;
+      res=min(res, 14.0*(q.y-hq)/t);
+      if(res<0.0) break;
+      t+=0.035+t*0.07;
+    }
+    return clamp(res,0.0,1.0);
+  }
+  void main(){
+    if(vW.z>uCut) discard;
+    float n=${TN + 3}.0;
+    vec2 tc=(vL*${TN}.0+1.5)/n;
+    if(texture(uM,tc).r<0.5) discard;
+    float e=1.0/n, dm=uTile.z*1000.0/${TN}.0;
+    float hL=texture(uT,tc-vec2(e,0)).r, hR=texture(uT,tc+vec2(e,0)).r, hU=texture(uT,tc-vec2(0,e)).r, hD=texture(uT,tc+vec2(0,e)).r;
+    vec2 g=vec2(hR-hL,hD-hU)/(2.0*dm);
+    float h=texture(uT,tc).r+uHOff;
+    vec3 N=normalize(vec3(-g.x*uEx,1.0,-g.y*uEx));
+    vec2 ouv=ovUV(vW.xz);
+    float hov=texture(uOv,ouv).r;
+    float rel=h-hov;
+    int L=layerAt(vW.xz,h-1.5);
+    vec3 base;
+    if(uMode==0){
+      base=hypso(h);
+      base=mix(base,vec3(0.80,0.52,0.40),smoothstep(0.45,1.1,length(g))*0.55);
+      if(selMatch(L,uSel)) base=mix(base,uLayerCol[uSel],0.72);
+    } else {
+      base=uLayerCol[L];
+      if(uSel>=8) base=mix(base,uLayerCol[soilOf(L)],0.6);
+      if(uSel>=0 && !selMatch(L,uSel)){ float gr=dot(base,vec3(0.3,0.59,0.11)); base=mix(base,vec3(gr),0.7)*0.75+0.08; }
+    }
+    float diff=max(dot(N,uSun),0.0);
+    float sh=diff>0.0? shadowT(vec3(vW.x,max(h,hov)*0.001*uEx+0.004,vW.z)) : 0.0;
+    float sky=0.55+0.45*N.y;
+    float ao=clamp(1.0+rel*0.006,0.5,1.15);
+    vec3 light=vec3(1.0,0.94,0.84)*diff*sh*1.02 + vec3(0.50,0.58,0.72)*sky*ao*0.6;
+    vec3 col;
+    if(uSatOn>0.5 && uHasSat>0.5){
+      // the aerial photo already carries its own shading, so the relief light is applied softly
+      vec3 sat=texture(uSat,vL*uSatXf.xy+uSatXf.zw).rgb;
+      sat=mix(vec3(dot(sat,vec3(0.3,0.59,0.11))),sat,1.2);
+      if(uMode==1) sat=mix(sat,base,0.45);
+      else if(selMatch(L,uSel)) sat=mix(sat,uLayerCol[uSel],0.5);
+      col=sat*mix(vec3(1.0),light*1.2,0.5)*1.08;
+      col=mix(col,vec3(0.63,0.71,0.79),(1.0-smoothstep(110.0,620.0,h))*0.08);
+    } else {
+      col=base*light;
+      col=mix(col,vec3(0.63,0.71,0.79),(1.0-smoothstep(110.0,620.0,h))*0.2*(uMode==0?1.0:0.5));
+    }
+    float dist=distance(vW,cameraPosition);
+    col=mix(col,uFog,smoothstep(150.0,360.0,dist)*0.6);
+    gl_FragColor=vec4(col,1.0);
+  }`;
+
+// one shared grid for all tiles: (TN/2+1)^2 vertices in [0,1]^2 plus a skirt ring
+const tileGeom = (() => {
+  const M = TN / 2 + 1, pos = [], skirt = [], idx = [];
+  for (let j = 0; j < M; j++) for (let i = 0; i < M; i++) { pos.push(i / (M - 1), 0, j / (M - 1)); skirt.push(0); }
+  for (let j = 0; j < M - 1; j++) for (let i = 0; i < M - 1; i++) { const v = j * M + i; idx.push(v, v + M, v + 1, v + 1, v + M, v + M + 1); }
+  const edge = (get) => {
+    const base = pos.length / 3;
+    for (let k = 0; k < M; k++) { const v = get(k); pos.push(pos[v * 3], 0, pos[v * 3 + 2]); skirt.push(1); }
+    for (let k = 0; k < M - 1; k++) { const a = get(k), b = get(k + 1), sa = base + k, sb = base + k + 1; idx.push(a, sa, b, b, sa, sb); }
+  };
+  edge(k => k); edge(k => (M - 1) * M + k); edge(k => k * M); edge(k => k * M + M - 1);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('aSkirt', new THREE.Float32BufferAttribute(skirt, 1));
+  g.setIndex(idx);
+  return g;
+})();
+
+const exists = new Set();
+for (const [L, keys] of Object.entries(tinfo.tiles)) for (const k of keys) exists.add(`${L}/${k}`);
+class Tile {
+  constructor(L, i, j, parent) {
+    this.L = L; this.i = i; this.j = j; this.parent = parent; this.key = `${L}/${i}_${j}`;
+    this.size = ROOT / 2 ** L; this.x0 = R0 + i * this.size; this.z0 = R0 + j * this.size;
+    this.exists = exists.has(this.key); this.state = 'none'; this.satState = 'none'; this.hiState = 'none'; this.hiUsed = 0; this.children = null; this.used = 0; this.hmin = 0; this.hmax = maxH;
+  }
+  kids() {
+    if (!this.children) this.children = [0, 1, 2, 3].map(q => new Tile(this.L + 1, this.i * 2 + (q & 1), this.j * 2 + (q >> 1), this));
+    return this.children;
+  }
+  async load() {
+    this.state = 'loading'; loads++;
+    try {
+      const { data } = await loadHeights(`terrain/${this.L}/${this.i}_${this.j}.webp`);
+      if (this.state !== 'loading') return;
+      const n = TN + 3, d = this.size / TN;
+      let lo = 1e9, hi = -1e9; for (const v of data) { if (v < lo) lo = v; if (v > hi) hi = v; }
+      this.hmin = lo; this.hmax = hi; this.h = data;
+      this.mat = new THREE.ShaderMaterial({
+        uniforms: { ...U, uT: { value: floatTex(data, n, lo) }, uM: { value: maskTex(coverage(this.x0 - d, this.z0 - d, d, n), n) },
+          uTile: { value: new THREE.Vector4(this.x0, this.z0, this.size, 0) }, uHOff: { value: lo },
+          uSat: { value: blankTex }, uHasSat: { value: 0 }, uSatXf: { value: new THREE.Vector4(1, 1, 0, 0) } },
+        vertexShader: TILE_VS, fragmentShader: TILE_FS, side: THREE.DoubleSide,
+      });
+      this.mesh = new THREE.Mesh(tileGeom, this.mat); this.mesh.frustumCulled = false; this.mesh.visible = false;
+      scene.add(this.mesh);
+      this.state = 'ready'; readyTiles.add(this);
+      wallsDirty = true; cutDirty = true; labelsDirty = true;
+    } catch (e) { console.warn('Kachel fehlt', this.key, e); this.state = 'failed'; }
+    finally { loads--; }
+  }
+  // Aerial photos: levels 0-3 have one image per tile; finest-level tiles share a 2048 px image
+  // per 2x2 block (sat/4, a quarter each) and get their own 2 m image (sat/5) when the camera is close.
+  async loadSat(hi = false) {
+    const k = hi ? 'hi' : 'sat';
+    this[k + 'State'] = 'loading'; satLoads++;
+    try {
+      let tex;
+      if (hi) tex = await loadSatTex(`sat/${LMAX + 1}/${this.i}_${this.j}.webp`);
+      else if (this.L === LMAX) { this.atlasKey = `sat/${LMAX}/${this.i >> 1}_${this.j >> 1}.webp`; tex = await atlasRef(this.atlasKey); }
+      else tex = await loadSatTex(`sat/${this.L}/${this.i}_${this.j}.webp`);
+      if (this.state !== 'ready' || this[k + 'State'] !== 'loading') { if (!hi && this.L === LMAX) atlasUnref(this.atlasKey); else tex.dispose(); return; }
+      this[k + 'Tex'] = tex; this[k + 'State'] = 'ready'; this.bindSat();
+    } catch (e) { console.warn('Luftbild fehlt', this.key, e); this[k + 'State'] = 'failed'; }
+    finally { satLoads--; }
+  }
+  bindSat() {
+    const u = this.mat.uniforms, tex = this.hiTex || this.satTex;
+    u.uSat.value = tex || blankTex; u.uHasSat.value = tex ? 1 : 0;
+    if (!this.hiTex && this.satTex && this.L === LMAX) u.uSatXf.value.set(0.5, 0.5, (this.i & 1) * 0.5, (this.j & 1) * 0.5);
+    else u.uSatXf.value.set(1, 1, 0, 0);
+  }
+  unloadSat(hiOnly = false) {
+    if (this.hiTex) { this.hiTex.dispose(); this.hiTex = null; }
+    this.hiState = 'none';
+    if (!hiOnly) {
+      if (this.satTex) { if (this.L === LMAX) atlasUnref(this.atlasKey); else this.satTex.dispose(); this.satTex = null; }
+      this.satState = 'none';
+    }
+    if (this.mat) this.bindSat();
+  }
+  unload() {
+    if (this.state !== 'ready') return;
+    this.unloadSat();
+    scene.remove(this.mesh); this.mat.uniforms.uT.value.dispose(); this.mat.uniforms.uM.value.dispose(); this.mat.dispose();
+    this.mesh = this.mat = this.h = null; this.state = 'none'; readyTiles.delete(this); wallsDirty = true; cutDirty = true;
+  }
+  sample(x, z) { // bilinear height (m) from this tile
+    const n = TN + 3, d = this.size / TN;
+    const fi = Math.min(Math.max((x - this.x0) / d + 1, 0), n - 1.001), fj = Math.min(Math.max((z - this.z0) / d + 1, 0), n - 1.001);
+    const i = Math.floor(fi), j = Math.floor(fj), u = fi - i, v = fj - j, k = j * n + i, H = this.h;
+    return (H[k] * (1 - u) + H[k + 1] * u) * (1 - v) + (H[k + n] * (1 - u) + H[k + n + 1] * u) * v;
+  }
+}
+async function loadSatTex(url) {
+  const blob = await (await fetch(url)).blob();
+  if (!blob.type.startsWith('image')) throw new Error('kein Bild: ' + url);
+  const bmp = await createImageBitmap(blob, { imageOrientation: 'none' });
+  const t = new THREE.Texture(bmp);
+  t.flipY = false; t.minFilter = THREE.LinearMipmapLinearFilter; t.anisotropy = maxAniso; t.needsUpdate = true;
+  return t;
+}
+const atlases = new Map();
+function atlasRef(url) {
+  let a = atlases.get(url);
+  if (!a) { a = { refs: 0, p: loadSatTex(url) }; atlases.set(url, a); a.p.catch(() => atlases.delete(url)); }
+  a.refs++; return a.p;
+}
+function atlasUnref(url) {
+  const a = atlases.get(url); if (!a) return;
+  if (--a.refs <= 0) { atlases.delete(url); a.p.then(t => t.dispose(), () => {}); }
+}
+const root = new Tile(0, 0, 0, null);
+const readyTiles = new Set();
+let loads = 0, satLoads = 0, wallsDirty = true, cutDirty = false, labelsDirty = true;
+await root.load();
+
+// finest loaded height at a point
+function heightAt(x, z) {
+  let t = root;
+  for (;;) {
+    if (!t.children) break;
+    const q = (x >= t.x0 + t.size / 2 ? 1 : 0) + (z >= t.z0 + t.size / 2 ? 2 : 0);
+    const c = t.children[q]; if (!c || c.state !== 'ready') break; t = c;
+  }
+  return t.state === 'ready' ? t.sample(x, z) : 0;
+}
+
+const frustum = new THREE.Frustum(), _m = new THREE.Matrix4(), _box = new THREE.Box3();
+let wanted = [], wantedSat = [], wantedHi = [], drawn = [];
+function tileBox(t) { _box.min.set(t.x0, t.hmin * 0.001 * st.ex - t.size * 0.012, t.z0); _box.max.set(t.x0 + t.size, t.hmax * 0.001 * st.ex, t.z0 + t.size); return _box; }
+// screen pixels per km at the closest point of a tile
+function pxPerKm(t) {
+  const b = tileBox(t), c = camera.position;
+  const dx = Math.max(b.min.x - c.x, 0, c.x - b.max.x), dy = Math.max(b.min.y - c.y, 0, c.y - b.max.y), dz = Math.max(b.min.z - c.z, 0, c.z - b.max.z);
+  const dist = Math.max(Math.hypot(dx, dy, dz), 0.01);
+  return renderer.domElement.height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * dist);
+}
+const wantsSplit = t => t.L < LMAX && (t.size / TN) * pxPerKm(t) > 1.25;
+const SAT_PX = 1024, HI_MAX = 8;
+function selectTiles(now) {
+  _m.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse); frustum.setFromProjectionMatrix(_m);
+  wanted = []; wantedSat = []; wantedHi = []; drawn = [];
+  const visit = (t) => {
+    if (!t.exists || t.z0 > st.cut) return;
+    if (!frustum.intersectsBox(tileBox(t))) return;
+    t.used = now;
+    if (wantsSplit(t)) {
+      const kids = t.kids().filter(k => k.exists);
+      for (const k of kids) k.used = now; // pending children must not be evicted before they are shown
+      // switch to the children only once their terrain (and aerial photo, if shown) is there
+      const ok = k => k.state === 'failed' || (k.state === 'ready' && (!st.sat || k.satState === 'ready' || k.satState === 'failed'));
+      for (const k of kids) { if (k.state === 'none') wanted.push(k); else if (st.sat && k.state === 'ready' && k.satState === 'none') wantedSat.push(k); }
+      if (kids.every(ok)) { for (const k of kids) if (k.state === 'ready') visit(k); return; }
+    }
+    if (t.state === 'ready') {
+      drawn.push(t);
+      if (st.sat && t.satState === 'none') wantedSat.push(t);
+      if (st.sat && t.L === LMAX && t.satState === 'ready') {
+        const px = (t.size / SAT_PX) * pxPerKm(t); // screen px per aerial pixel
+        if (px > 0.6) t.hiUsed = now;
+        if (px > 1.0 && t.hiState === 'none') wantedHi.push(t);
+      }
+    }
+  };
+  visit(root);
+  for (const t of readyTiles) t.mesh.visible = false;
+  for (const t of drawn) t.mesh.visible = true;
+  // load coarse and near tiles first
+  const c = camera.position;
+  wanted.sort((a, b) => a.L - b.L || Math.hypot(a.x0 + a.size / 2 - c.x, a.z0 + a.size / 2 - c.z) - Math.hypot(b.x0 + b.size / 2 - c.x, b.z0 + b.size / 2 - c.z));
+  for (const t of wanted) { if (loads >= MAX_LOADS) break; t.load(); }
+  wantedSat.sort((a, b) => a.L - b.L || Math.hypot(a.x0 + a.size / 2 - c.x, a.z0 + a.size / 2 - c.z) - Math.hypot(b.x0 + b.size / 2 - c.x, b.z0 + b.size / 2 - c.z));
+  for (const t of wantedSat) { if (satLoads >= 4) break; t.loadSat(); }
+  let hiCount = 0; for (const t of readyTiles) if (t.hiState === 'ready' || t.hiState === 'loading') hiCount++;
+  wantedHi.sort((a, b) => Math.hypot(a.x0 + a.size / 2 - c.x, a.z0 + a.size / 2 - c.z) - Math.hypot(b.x0 + b.size / 2 - c.x, b.z0 + b.size / 2 - c.z));
+  for (const t of wantedHi) { if (satLoads >= 4 || hiCount >= HI_MAX) break; t.loadSat(true); hiCount++; }
+  // aerial photos are large on the GPU: drop them from tiles that are out of view or far away
+  for (const t of readyTiles) {
+    if (t.satTex && (!st.sat || now - t.used > 3000)) t.unloadSat();
+    else if (t.hiTex && now - t.hiUsed > 2500) t.unloadSat(true);
+  }
+  // evict tiles that were not used for a while
+  if (readyTiles.size > CACHE_MAX) {
+    const old = [...readyTiles].filter(t => t.L >= 2 && now - t.used > 3000).sort((a, b) => a.used - b.used);
+    for (const t of old.slice(0, readyTiles.size - CACHE_MAX)) t.unload();
+  }
+}
+
+/* walls + cut face share one material; their top heights come from the CPU (finest loaded tile) */
+const wallMat = new THREE.ShaderMaterial({
+  uniforms: U, side: THREE.DoubleSide,
+  vertexShader: COMMON + /* glsl */`
+    attribute float aTop; attribute float aTopH; varying vec3 vW; varying float vTopY; varying vec3 vN;
+    void main(){ float top=aTopH*0.001*uEx; float y=aTop>0.5? top : uBaseY;
+      vec3 p=vec3(position.x,y,position.z); vW=p; vTopY=top; vN=normal;
+      gl_Position=projectionMatrix*viewMatrix*vec4(p,1.0); }`,
+  fragmentShader: COMMON + /* glsl */`
+    varying vec3 vW; varying float vTopY; varying vec3 vN;
+    vec3 soilProfile(int s,float f,vec3 rock){
+      if(s==8){
+        if(f<0.12) return vec3(0.16,0.12,0.10);
+        if(f<0.38) return vec3(0.73,0.71,0.67);
+        if(f<0.52) return vec3(0.28,0.17,0.12);
+        if(f<0.76) return vec3(0.63,0.34,0.17);
+        return mix(vec3(0.63,0.34,0.17),rock,(f-0.76)/0.24);
+      }
+      if(f<0.2) return vec3(0.24,0.17,0.11);
+      return mix(vec3(0.55,0.40,0.24),rock,smoothstep(0.55,1.0,f));
+    }
+    float bedding(int L,float h,vec3 w){
+      float a=w.x+w.z*1.37;
+      float sp= L==0?26.0 : L==1?11.0 : L==2?7.0 : (L==3||L==6)?16.0 : L==4?9.0 : 6.0;
+      float n=vnoise(vec2(a*5.0,h*0.04));
+      float s=fract(h/sp+n*0.6);
+      float v=mix(0.84,1.0,smoothstep(0.0,0.14,s));
+      if(L==3||L==6){ float c=fract(h/sp*2.0+a*55.0); v*=mix(0.9,1.0,smoothstep(0.0,0.2,c)); }
+      float aa=clamp(1.0-fwidth(h)/sp*1.6,0.0,1.0);
+      v=mix(1.0,v,aa);
+      if(L==0) v*=0.88+0.18*vnoise(vec2(a*30.0,h*0.08));
+      return v*(0.94+0.1*n);
+    }
+    void main(){
+      if(vW.z>uCut+0.0005) discard;
+      float h=vW.y/uEx*1000.0;
+      float depth=vTopY-vW.y;
+      int Ltop=layerAt(vW.xz,vTopY/uEx*1000.0-1.5);
+      int L; vec3 col;
+      if(depth<SOIL_DISP){ L=soilOf(Ltop); col=soilProfile(L,depth/SOIL_DISP,uLayerCol[Ltop]); }
+      else {
+        L=layerAt(vW.xz,h); col=uLayerCol[L]*bedding(L,h,vW);
+        float bd=boundaryDist(vW.xz,h); col*=mix(0.5,1.0,smoothstep(0.0,fwidth(h)*1.3,bd));
+      }
+      if(uSel>=0 && L!=uSel){ float g=dot(col,vec3(0.3,0.59,0.11)); col=mix(col,vec3(g),0.7)*0.62; }
+      float diff=max(dot(normalize(vN),uSun),0.0);
+      col*=0.9+0.3*diff;
+      col*=mix(0.82,1.0,smoothstep(uBaseY,uBaseY+0.9,vW.y));
+      float dist=distance(vW,cameraPosition);
+      col=mix(col,uFog,smoothstep(150.0,360.0,dist)*0.6);
+      gl_FragColor=vec4(col,1.0);
+    }`,
+});
+
+const ring = [];
+let wallGeom, wallTopH;
+{
+  for (let k = 0; k < NP; k++) {
+    const a = poly[k], b = poly[(k + 1) % NP];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]); const n = Math.max(1, Math.ceil(len / WALL_STEP));
+    for (let s = 0; s < n; s++) ring.push([a[0] + (b[0] - a[0]) * s / n, a[1] + (b[1] - a[1]) * s / n]);
+  }
+  let area = 0; for (let k = 0; k < NP; k++) { const a = poly[k], b = poly[(k + 1) % NP]; area += a[0] * b[1] - b[0] * a[1]; }
+  const sgn = area > 0 ? 1 : -1, n = ring.length;
+  const pos = new Float32Array(n * 4 * 3), nor = new Float32Array(n * 4 * 3), top = new Float32Array(n * 4), idx = new Uint32Array(n * 6);
+  wallTopH = new Float32Array(n * 4);
+  for (let k = 0; k < n; k++) {
+    const a = ring[k], b = ring[(k + 1) % n];
+    let dx = b[0] - a[0], dz = b[1] - a[1]; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+    const nxo = sgn * dz, nzo = -sgn * dx, v = k * 4;
+    [[a, 1], [a, 0], [b, 1], [b, 0]].forEach(([p, t], m) => { pos.set([p[0], 0, p[1]], (v + m) * 3); nor.set([nxo, 0, nzo], (v + m) * 3); top[v + m] = t; });
+    idx.set([v, v + 1, v + 2, v + 2, v + 1, v + 3], k * 6);
+  }
+  wallGeom = new THREE.BufferGeometry();
+  wallGeom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  wallGeom.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  wallGeom.setAttribute('aTop', new THREE.BufferAttribute(top, 1));
+  wallGeom.setAttribute('aTopH', new THREE.BufferAttribute(wallTopH, 1));
+  wallGeom.setIndex(new THREE.BufferAttribute(idx, 1));
+  const walls = new THREE.Mesh(wallGeom, wallMat); walls.frustumCulled = false; scene.add(walls);
+}
+function updateWalls() {
+  const n = ring.length;
+  for (let k = 0; k < n; k++) {
+    const a = ring[k], b = ring[(k + 1) % n], ha = heightAt(a[0], a[1]), hb = heightAt(b[0], b[1]), v = k * 4;
+    wallTopH[v] = wallTopH[v + 1] = ha; wallTopH[v + 2] = wallTopH[v + 3] = hb;
+  }
+  wallGeom.attributes.aTopH.needsUpdate = true;
+}
+
+let cutMesh = null;
+function buildCut(c) {
+  if (cutMesh) { scene.remove(cutMesh); cutMesh.geometry.dispose(); cutMesh = null; }
+  if (c > 1e5) return;
+  const xs = crossings(c, []);
+  const pos = [], top = [], toph = [], nor = [], idx = [];
+  for (let k = 0; k + 1 < xs.length; k += 2) {
+    const n = Math.max(1, Math.ceil((xs[k + 1] - xs[k]) / WALL_STEP));
+    for (let s = 0; s <= n; s++) {
+      const x = xs[k] + (xs[k + 1] - xs[k]) * s / n, v = pos.length / 3, h = heightAt(x, c);
+      pos.push(x, 0, c, x, 0, c); top.push(1, 0); toph.push(h, h); nor.push(0, 0, 1, 0, 0, 1);
+      if (s < n) idx.push(v, v + 1, v + 2, v + 2, v + 1, v + 3);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute('aTop', new THREE.Float32BufferAttribute(top, 1));
+  g.setAttribute('aTopH', new THREE.Float32BufferAttribute(toph, 1));
+  g.setIndex(idx);
+  cutMesh = new THREE.Mesh(g, wallMat); cutMesh.frustumCulled = false; scene.add(cutMesh);
+}
+
+/* floor with soft contact shadow */
+const SH_R = 70;
+const shTex = (() => {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 1024;
+  const cx = cv.getContext('2d'); const k = 1024 / (2 * SH_R);
+  cx.filter = 'blur(14px)'; cx.fillStyle = '#000';
+  cx.beginPath(); poly.forEach(([x, z], i) => { const X = (x + SH_R) * k, Y = (z + SH_R) * k; i ? cx.lineTo(X, Y) : cx.moveTo(X, Y); }); cx.closePath(); cx.fill();
+  const t = new THREE.CanvasTexture(cv); t.flipY = false; return t;
+})();
+const floorU = { uShadow: { value: shTex }, uShOff: { value: new THREE.Vector2() }, uR: { value: SH_R } };
+const floor = new THREE.Mesh(new THREE.CircleGeometry(230, 96).rotateX(-Math.PI / 2), new THREE.ShaderMaterial({
+  uniforms: floorU, transparent: true, depthWrite: false,
+  vertexShader: `varying vec3 vW; void main(){ vec4 w=modelMatrix*vec4(position,1.0); vW=w.xyz; gl_Position=projectionMatrix*viewMatrix*w; }`,
+  fragmentShader: `uniform sampler2D uShadow; uniform vec2 uShOff; uniform float uR; varying vec3 vW;
+    void main(){ float r=length(vW.xz); vec3 c=mix(vec3(0.17,0.20,0.235),vec3(0.085,0.10,0.115),smoothstep(25.0,170.0,r));
+      vec2 uv=(vW.xz-uShOff+uR)/(2.0*uR); float s=(uv.x>0.0&&uv.x<1.0&&uv.y>0.0&&uv.y<1.0)? texture2D(uShadow,uv).a : 0.0;
+      c*=1.0-0.6*s; gl_FragColor=vec4(c,1.0-smoothstep(130.0,225.0,r)); }`,
+}));
+floor.renderOrder = -1; scene.add(floor);
+
+/* ---------- CPU picking ---------- */
+const st = { ex: 3, cut: 1e6, mode: 0, sel: -1, selCastle: -1, sat: false };
+const baseY = () => BASE_M * 0.001 * st.ex;
+const maxY = () => maxH * 0.001 * st.ex + 0.01;
+const groundY = (x, z) => heightAt(x, z) * 0.001 * st.ex;
+function solid(x, y, z) {
+  if (z > st.cut || y < baseY() || y > maxY()) return false;
+  if (!insidePoly(x, z)) return false;
+  return y <= groundY(x, z);
+}
+const raycaster = new THREE.Raycaster(), _ndc = new THREE.Vector2();
+function rayAt(cx, cy) {
+  const r = renderer.domElement.getBoundingClientRect();
+  _ndc.set((cx - r.left) / r.width * 2 - 1, -(cy - r.top) / r.height * 2 + 1);
+  raycaster.setFromCamera(_ndc, camera);
+  return raycaster.ray;
+}
+function pickRay(o, d) {
+  let t0 = 0, t1 = 1e4;
+  const lo = [pxMin, baseY(), pzMin], hi = [pxMax, maxY(), Math.min(pzMax, st.cut)], oo = [o.x, o.y, o.z], dd = [d.x, d.y, d.z];
+  for (let i = 0; i < 3; i++) {
+    if (Math.abs(dd[i]) < 1e-9) { if (oo[i] < lo[i] || oo[i] > hi[i]) return null; continue; }
+    let ta = (lo[i] - oo[i]) / dd[i], tb = (hi[i] - oo[i]) / dd[i]; if (ta > tb) [ta, tb] = [tb, ta];
+    t0 = Math.max(t0, ta); t1 = Math.min(t1, tb);
+  }
+  if (t0 > t1) return null;
+  let prev = t0 - 1e-4;
+  for (let t = t0; t <= t1 + 0.05; t += Math.max(0.006, t * 0.0012)) {
+    const x = o.x + d.x * t, y = o.y + d.y * t, z = o.z + d.z * t;
+    if (solid(x, y, z)) {
+      let a = prev, b = t;
+      for (let i = 0; i < 18; i++) { const m = (a + b) / 2; solid(o.x + d.x * m, o.y + d.y * m, o.z + d.z * m) ? b = m : a = m; }
+      const p = new THREE.Vector3(o.x + d.x * b, o.y + d.y * b, o.z + d.z * b);
+      const q = new THREE.Vector3(o.x + d.x * a, o.y + d.y * a, o.z + d.z * a);
+      const onTop = q.z <= st.cut && insidePoly(q.x, q.z) && q.y > groundY(q.x, q.z);
+      return { p, onTop };
+    }
+    prev = t;
+  }
+  return null;
+}
+const pick = (cx, cy) => { const r = rayAt(cx, cy); return pickRay(r.origin, r.direction); };
+function describeHit(hit) {
+  const { p, onTop } = hit;
+  const hTop = heightAt(p.x, p.z);
+  if (onTop) return { layer: layerAt(p.x, p.z, hTop - 1.5), h: hTop, surface: true };
+  if (groundY(p.x, p.z) - p.y < SOIL_DISP) return { layer: soilOf(layerAt(p.x, p.z, hTop - 1.5)), h: hTop, soil: true };
+  const h = p.y / st.ex * 1000;
+  return { layer: layerAt(p.x, p.z, h), h };
+}
+// point on the model or the table under the cursor; used as anchor for navigation
+function groundPoint(cx, cy) {
+  const r = rayAt(cx, cy), o = r.origin, d = r.direction;
+  const hit = pickRay(o, d); if (hit) return hit.p;
+  if (d.y < -1e-4) { const t = (baseY() - o.y) / d.y; if (t > 0 && t < 900) return o.clone().addScaledVector(d, t); }
+  return null;
+}
+
+/* ---------- Earth-style navigation ----------
+   left drag: grab and move the map · right drag / Shift / Ctrl + drag: rotate and tilt around the point under the cursor
+   wheel / pinch: zoom towards the cursor · double click: zoom in · two fingers: zoom, twist, tilt */
+const nav = (() => {
+  const el = renderer.domElement, ptrs = new Map();
+  let mode = null, anchor = null, pivot = null, last = null, vel = new THREE.Vector2(), lastMove = 0;
+  let zoomPending = 0, zoomAnchor = null, start = null, two = null;
+  const _q = new THREE.Quaternion(), _v = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
+  const pitchOf = () => { _v.set(0, 0, -1).applyQuaternion(camera.quaternion); return Math.asin(Math.min(1, Math.max(-1, -_v.y))); };
+  const clampCam = () => {
+    const p = camera.position;
+    p.x = Math.min(Math.max(p.x, -140), 140); p.z = Math.min(Math.max(p.z, -140), 140);
+    const g = Math.max(insidePoly(p.x, p.z) && p.z <= st.cut ? groundY(p.x, p.z) : baseY(), baseY()) + 0.12;
+    if (p.y < g) p.y = g; if (p.y > 260) p.y = 260;
+    camera.updateMatrixWorld(); changed();
+  };
+  function panTo(cx, cy) {
+    if (!anchor) return null;
+    const r = rayAt(cx, cy), o = r.origin, d = r.direction;
+    if (d.y > -0.02) return null;
+    const t = (anchor.y - o.y) / d.y; if (t < 0 || t > 1500) return null;
+    const dx = anchor.x - (o.x + d.x * t), dz = anchor.z - (o.z + d.z * t);
+    camera.position.x += dx; camera.position.z += dz; clampCam();
+    return [dx, dz];
+  }
+  function rotate(p, yaw, dPitch) {
+    if (!p) return;
+    if (yaw) {
+      _q.setFromAxisAngle(UP, yaw);
+      camera.position.sub(p).applyQuaternion(_q).add(p); camera.quaternion.premultiply(_q);
+    }
+    if (dPitch) {
+      const cur = pitchOf(), next = Math.min(Math.max(cur + dPitch, 0.1), 1.55), a = next - cur;
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion); right.y = 0; right.normalize();
+      _q.setFromAxisAngle(right, -a);
+      const before = camera.position.clone(), beforeQ = camera.quaternion.clone();
+      camera.position.sub(p).applyQuaternion(_q).add(p); camera.quaternion.premultiply(_q);
+      if (camera.position.y < groundY(camera.position.x, camera.position.z) + 0.12) { camera.position.copy(before); camera.quaternion.copy(beforeQ); }
+    }
+    clampCam();
+  }
+  function zoom(p, f) {
+    if (!p) return;
+    const off = camera.position.clone().sub(p), len = off.length(), nl = Math.min(Math.max(len * f, 0.35), 300);
+    camera.position.copy(p).addScaledVector(off, nl / len); clampCam();
+  }
+  const isRotate = e => e.pointerType === 'mouse' && (e.button === 2 || e.button === 1 || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey);
+  el.addEventListener('contextmenu', e => e.preventDefault());
+  el.addEventListener('pointerdown', e => {
+    try { el.setPointerCapture(e.pointerId); } catch {}
+    document.body.classList.add('dragging');
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    fly = null; vel.set(0, 0); zoomPending = 0;
+    if (ptrs.size === 1) {
+      start = { x: e.clientX, y: e.clientY, t: performance.now() };
+      mode = isRotate(e) ? 'rotate' : 'pan';
+      const g = groundPoint(e.clientX, e.clientY);
+      if (mode === 'pan') anchor = g; else pivot = g || groundPoint(innerWidth / 2, innerHeight / 2);
+      last = { x: e.clientX, y: e.clientY };
+    } else if (ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()];
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      mode = 'two'; start = null;
+      two = { d: Math.hypot(b.x - a.x, b.y - a.y), ang: Math.atan2(b.y - a.y, b.x - a.x), mx, my };
+      anchor = groundPoint(mx, my);
+    }
+  });
+  el.addEventListener('pointermove', e => {
+    if (!ptrs.has(e.pointerId)) return;
+    ptrs.get(e.pointerId).x = e.clientX; ptrs.get(e.pointerId).y = e.clientY;
+    if (mode === 'pan') {
+      const dlt = panTo(e.clientX, e.clientY); const now = performance.now();
+      if (dlt) { const dt = Math.max(now - lastMove, 1); vel.set(dlt[0] / dt, dlt[1] / dt).multiplyScalar(0.6).add(vel.clone().multiplyScalar(0.4)); }
+      lastMove = now;
+    } else if (mode === 'rotate') {
+      rotate(pivot, -(e.clientX - last.x) * 0.006, (e.clientY - last.y) * 0.005);
+      last = { x: e.clientX, y: e.clientY };
+    } else if (mode === 'two' && ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()];
+      const d = Math.hypot(b.x - a.x, b.y - a.y), ang = Math.atan2(b.y - a.y, b.x - a.x), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      if (anchor) {
+        zoom(anchor, two.d / Math.max(d, 1));
+        rotate(anchor, ang - two.ang, (my - two.my) * 0.004);
+        panTo(mx, my);
+      }
+      two = { d, ang, mx, my };
+    }
+  });
+  const end = e => {
+    if (!ptrs.has(e.pointerId)) return;
+    ptrs.delete(e.pointerId);
+    try { if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId); } catch {}
+    if (ptrs.size === 0) {
+      document.body.classList.remove('dragging');
+      if (start && e.type === 'pointerup' && Math.hypot(e.clientX - start.x, e.clientY - start.y) < 5 && performance.now() - start.t < 450) onClick(e.clientX, e.clientY);
+      if (mode !== 'pan' || performance.now() - lastMove > 80) vel.set(0, 0);
+      mode = null; anchor = null; pivot = null; start = null;
+    } else if (ptrs.size === 1) {
+      // continue as a one-finger pan with the remaining pointer
+      const [p] = [...ptrs.values()]; mode = 'pan'; anchor = groundPoint(p.x, p.y); start = null;
+    }
+  };
+  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end); el.addEventListener('lostpointercapture', end);
+  // listen on the document so the wheel also works over castle pins and labels
+  document.addEventListener('wheel', e => {
+    if (e.target !== el && !e.target.closest?.('#labels')) return;
+    e.preventDefault(); fly = null;
+    const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+    zoomAnchor = groundPoint(e.clientX, e.clientY) || zoomAnchor;
+    zoomPending += Math.max(-300, Math.min(300, dy)) * 0.0022;
+  }, { passive: false });
+  el.addEventListener('dblclick', e => { const p = groundPoint(e.clientX, e.clientY); if (p) { zoomAnchor = p; zoomPending -= 0.9; } });
+  function update(dt) {
+    if (zoomPending && zoomAnchor) {
+      const step = zoomPending * Math.min(1, dt / 90); zoomPending -= step;
+      if (Math.abs(zoomPending) < 1e-4) zoomPending = 0;
+      zoom(zoomAnchor, Math.exp(step));
+    }
+    if (!mode && vel.lengthSq() > 1e-10) {
+      camera.position.x += vel.x * dt; camera.position.z += vel.y * dt;
+      vel.multiplyScalar(Math.pow(0.9, dt / 16)); clampCam();
+    }
+  }
+  return {
+    update, rotate, zoom,
+    zoomCenter(f) { const r = renderer.domElement.getBoundingClientRect(); zoomAnchor = groundPoint(r.left + r.width / 2, r.top + r.height / 2); if (zoomAnchor) zoomPending += f; },
+    headingNorth() {
+      const r = renderer.domElement.getBoundingClientRect(), p = groundPoint(r.left + r.width / 2, r.top + r.height / 2);
+      _v.set(0, 0, -1).applyQuaternion(camera.quaternion); const head = Math.atan2(_v.x, -_v.z);
+      flyStart({ yaw: head, pivot: p });
+    },
+  };
+})();
+function changed() { labelsDirty = true; }
+
+/* ---------- camera flights ---------- */
+let fly = null;
+function lookFrom(target, pos) { const m = new THREE.Matrix4().lookAt(pos, target, new THREE.Vector3(0, 1, 0)); return new THREE.Quaternion().setFromRotationMatrix(m); }
+function flyTo(target, pos, dur = 1400) { fly = { t0: performance.now(), dur, fp: camera.position.clone(), fq: camera.quaternion.clone(), tp: pos, tq: lookFrom(target, pos) }; }
+function flyStart({ yaw, pivot }) {
+  if (!pivot) pivot = camera.position.clone().add(new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).multiplyScalar(30));
+  const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+  const pos = camera.position.clone().sub(pivot).applyQuaternion(q).add(pivot);
+  fly = { t0: performance.now(), dur: 700, fp: camera.position.clone(), fq: camera.quaternion.clone(), tp: pos, tq: camera.quaternion.clone().premultiply(q), pivot, yaw };
+}
+const ease = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+function stepFly(now) {
+  if (!fly) return;
+  const k = Math.min(1, (now - fly.t0) / fly.dur), e = ease(k);
+  if (fly.pivot) { // rotate along an arc around the pivot
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), fly.yaw * e);
+    camera.position.copy(fly.fp).sub(fly.pivot).applyQuaternion(q).add(fly.pivot);
+    camera.quaternion.copy(fly.fq).premultiply(q);
+  } else { camera.position.lerpVectors(fly.fp, fly.tp, e); camera.quaternion.slerpQuaternions(fly.fq, fly.tq, e); }
+  if (k >= 1) fly = null; changed();
+}
+const HOME = { target: new THREE.Vector3(0, 0.2, 2), pos: new THREE.Vector3(30, 62, 92) };
+function homePos() { const asp = stage.clientWidth / stage.clientHeight; const k = asp < 1.2 ? Math.min(2.6, 1.2 / asp) : 1; return HOME.pos.clone().sub(HOME.target).multiplyScalar(k).add(HOME.target); }
+camera.position.copy(homePos()); camera.quaternion.copy(lookFrom(HOME.target, camera.position));
+$('#resetView').addEventListener('click', () => flyTo(HOME.target.clone(), homePos()));
+$('#compassBtn').addEventListener('click', () => nav.headingNorth());
+$('#zoomIn').addEventListener('click', () => nav.zoomCenter(-0.7));
+$('#zoomOut').addEventListener('click', () => nav.zoomCenter(0.7));
+
+/* ---------- labels ---------- */
+const labelsEl = $('#labels');
+const CASTLE_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 15V6h2v2h1.5V6h2v2H9V6h2v2h1.5V6h2v9H9.5v-3a1.5 1.5 0 0 0-3 0v3z"/><path fill="currentColor" d="M7.4 1h1.2v4H7.4z"/><path fill="currentColor" d="M8.6 1h3.2L10.6 2.4l1.2 1.4H8.6z"/></svg>';
+const labels = [];
+CASTLES.forEach((c, i) => {
+  const [x, z] = proj(c.lat, c.lon);
+  const el = document.createElement('button'); el.className = 'pin'; el.type = 'button';
+  el.setAttribute('aria-label', c.name);
+  el.innerHTML = `<span class="tag">${c.name}</span><span class="ico">${CASTLE_SVG}</span><span class="stem"></span>`;
+  el.addEventListener('click', e => { e.stopPropagation(); showCastle(i, true); });
+  labelsEl.appendChild(el); labels.push({ el, x, z, kind: 'castle', i });
+});
+PEAKS.forEach(([n, e, lat, lon]) => {
+  const [x, z] = proj(lat, lon); const el = document.createElement('div'); el.className = 'peak';
+  el.innerHTML = `${n}<br>${e} m`; labelsEl.appendChild(el); labels.push({ el, x, z, kind: 'peak' });
+});
+TOWNS.forEach(([n, lat, lon]) => {
+  const [x, z] = proj(lat, lon); const el = document.createElement('div'); el.className = 'town'; el.textContent = n;
+  labelsEl.appendChild(el); labels.push({ el, x, z, kind: 'town' });
+});
+const labelWorld = l => l.kind === 'town' ? new THREE.Vector3(l.x, baseY(), l.z) : new THREE.Vector3(l.x, groundY(l.x, l.z) + 0.004, l.z);
+function visibleFrom(p) {
+  const c = camera.position, d = c.clone().sub(p); const len = d.length(); d.normalize();
+  for (let t = 0.05; t < len; t += Math.max(0.02, t * 0.015)) {
+    const y = p.y + d.y * t; if (y > maxY()) return true;
+    if (solid(p.x + d.x * t, y, p.z + d.z * t)) return false;
+  }
+  return true;
+}
+const showCastles = $('#showCastles'), showNames = $('#showNames');
+function updateLabels() {
+  const r = renderer.domElement.getBoundingClientRect();
+  for (const l of labels) {
+    const hidden = (l.kind === 'castle' && !showCastles.checked) || (l.kind !== 'castle' && !showNames.checked) || (l.kind !== 'town' && l.z > st.cut);
+    if (hidden) { l.el.classList.add('hidden-lbl'); continue; }
+    const p = labelWorld(l);
+    const v = p.clone().project(camera);
+    if (labelsDirty) l.vis = v.z <= 1 && visibleFrom(p);
+    if (v.z > 1 || Math.abs(v.x) > 1.1 || Math.abs(v.y) > 1.1 || !l.vis) { l.el.classList.add('hidden-lbl'); continue; }
+    l.el.classList.remove('hidden-lbl');
+    l.el.style.transform = `translate(${(v.x * 0.5 + 0.5) * r.width}px, ${(-v.y * 0.5 + 0.5) * r.height}px) translate(-50%, ${l.kind === 'town' ? '-50%' : '-100%'})`;
+    if (l.kind === 'castle') { l.el.classList.toggle('named', camera.position.distanceTo(p) < 32); l.el.classList.toggle('sel', l.i === st.selCastle); }
+  }
+  labelsDirty = false;
+}
+
+/* ---------- panel ---------- */
+const pbody = $('#pbody');
+let tab = 'layers';
+const swatch = id => `<span class="sw" style="background:${LAYERS[id].color}"></span>`;
+function renderLayers() {
+  const order = [8, 9, 7, 6, 5, 4, 3, 2, 1, 0];
+  let lastGroup = '', items = '';
+  for (const id of order) {
+    const l = LAYERS[id];
+    if (l.group !== lastGroup) { items += `<li class="group-lbl">${l.group}</li>`; lastGroup = l.group; }
+    items += `<li><button data-layer="${id}" aria-current="${st.sel === id}">${swatch(id)}<span>${l.name}</span><small>${l.ts}</small></button></li>`;
+  }
+  pbody.innerHTML = `
+    <h2>Gesteinsschichten</h2>
+    <p class="sub">Von oben nach unten, wie sie in den Schnittkanten liegen. Antippen hebt eine Schicht im Modell hervor.</p>
+    <ul class="legend">${items}</ul>
+    <h3>Erdgeschichte</h3>
+    <ol class="timeline">${HISTORY.map(([y, t]) => `<li><b>${y}</b>${t}</li>`).join('')}</ol>
+    <h3>Zum Modell</h3>
+    <p class="note">Die Schichtgrenzen sind ein vereinfachtes Modell: sanft nach Westen geneigt, um Albersweiler aufgewölbt und nach Norden ansteigend, mit Mächtigkeiten nach Übersichtsangaben. Es zeigt das Prinzip, nicht jede Verwerfung. Genaue Grenzen liefert die geologische Karte des Landesamts für Geologie und Bergbau Rheinland-Pfalz.</p>
+    <p class="credits">Höhen: Digitales Geländemodell 1 m, ©GeoBasis-DE / LVermGeoRP 2025, dl-de/by-2-0, aufbereitet über <a href="https://mapterhorn.com" target="_blank" rel="noopener">Mapterhorn</a>, hier auf 7,8 m vereinfacht. Luftbild: DOP20, ©GeoBasis-DE / LVermGeoRP 2026, dl-de/by-2-0, <a href="https://lvermgeo.rlp.de" target="_blank" rel="noopener">lvermgeo.rlp.de</a> [Daten bearbeitet: verkleinert auf 4–125 m pro Pixel]. Naturraumgrenze und Burgpositionen: © OpenStreetMap-Mitwirkende (ODbL). Burgdaten nach Wikipedia.</p>`;
+}
+function renderLayer(id, extra) {
+  const l = LAYERS[id];
+  pbody.innerHTML = `
+    <button class="back" data-back>← Alle Schichten</button>
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:6px"><span class="sw" style="width:34px;height:24px;background:${l.color}"></span><span class="sub" style="margin:0">${l.group}</span></div>
+    <h2>${l.name}</h2>
+    ${extra ? `<p class="sub">${extra}</p>` : ''}
+    <dl class="facts"><dt>Alter</dt><dd>${l.age}</dd><dt>Mächtigkeit</dt><dd>${l.thick}</dd></dl>
+    <h3>Material</h3><p>${l.material}</p>
+    <h3>Eigenschaften</h3><p>${l.props}</p>
+    <h3>Entstehung</h3><p>${l.origin}</p>
+    <h3>Wo zu sehen</h3><p>${l.where}</p>`;
+}
+function renderCastles() {
+  pbody.innerHTML = `
+    <h2>Burgen</h2>
+    <p class="sub">Zwölf der bekanntesten Burgen. Antippen fliegt hin.</p>
+    <ul class="castles">${CASTLES.map((c, i) => `<li><button data-castle="${i}"><span class="nm">${c.name}</span><span class="pl">${c.place}</span><span class="el">${c.ele} m</span></button></li>`).join('')}</ul>
+    <p class="credits" style="margin-top:16px">Höhen in Metern über Normalhöhennull. Daten nach Wikipedia.</p>`;
+}
+function renderCastle(i) {
+  const c = CASTLES[i]; const [x, z] = proj(c.lat, c.lon);
+  const L = layerAt(x, z, heightAt(x, z) - 1.5);
+  pbody.innerHTML = `
+    <button class="back" data-back>← Alle Burgen</button>
+    <h2>${c.name}</h2>
+    <p class="sub">${c.place} · <span style="font-family:var(--f-mono)">${c.ele} m</span></p>
+    <p>${c.lead}</p>
+    <h3>Geschichte</h3>
+    <dl class="facts">${c.facts.map(([y, t]) => `<dt>${y}</dt><dd>${t}</dd>`).join('')}</dl>
+    <h3>Untergrund im Modell</h3>
+    <button class="chip" data-layer="${L}">${swatch(L)}${LAYERS[L].name}</button>`;
+}
+function setTab(t) {
+  tab = t;
+  $('#tabLayers').setAttribute('aria-selected', t === 'layers'); $('#tabCastles').setAttribute('aria-selected', t === 'castles');
+  t === 'layers' ? renderLayers() : renderCastles();
+  pbody.scrollTop = 0;
+}
+function selectLayer(id, extra) {
+  st.sel = id; U.uSel.value = id; st.selCastle = -1; labelsDirty = true;
+  $('#tabLayers').setAttribute('aria-selected', true); $('#tabCastles').setAttribute('aria-selected', false); tab = 'layers';
+  renderLayer(id, extra); pbody.scrollTop = 0;
+}
+function clearSel() { st.sel = -1; U.uSel.value = -1; st.selCastle = -1; labelsDirty = true; }
+pbody.addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.back !== undefined) { clearSel(); setTab(tab); return; }
+  if (b.dataset.layer) { selectLayer(+b.dataset.layer); return; }
+  if (b.dataset.castle) showCastle(+b.dataset.castle, true);
+});
+$('#tabLayers').addEventListener('click', () => { clearSel(); setTab('layers'); });
+$('#tabCastles').addEventListener('click', () => { clearSel(); setTab('castles'); });
+function showCastle(i, move) {
+  st.selCastle = i; st.sel = -1; U.uSel.value = -1;
+  $('#tabLayers').setAttribute('aria-selected', false); $('#tabCastles').setAttribute('aria-selected', true); tab = 'castles';
+  renderCastle(i); pbody.scrollTop = 0;
+  if (move) {
+    const c = CASTLES[i]; const [x, z] = proj(c.lat, c.lon);
+    if (z > st.cut) { $('#cut').value = 0; setCut(0); }
+    const t = new THREE.Vector3(x, groundY(x, z), z);
+    const dir = new THREE.Vector3(0, 0, 1).applyQuaternion(camera.quaternion); dir.y = Math.max(dir.y, 0.55); dir.normalize();
+    flyTo(t, t.clone().add(dir.multiplyScalar(9)));
+  }
+  labelsDirty = true;
+}
+
+/* ---------- settings ---------- */
+const compassNames = ['N', 'NO', 'O', 'SO', 'S', 'SW', 'W', 'NW'];
+function setSun() {
+  const az = +$('#sunAz').value * Math.PI / 180, el = +$('#sunEl').value * Math.PI / 180;
+  // azimuth clockwise from north; north is -z, east is +x
+  U.uSun.value.set(Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el));
+  $('#sunAzOut').textContent = compassNames[Math.round(+$('#sunAz').value / 45) % 8];
+  $('#sunElOut').textContent = $('#sunEl').value + '°';
+  const blockH = (maxH - BASE_M) * 0.001 * st.ex;
+  const s = U.uSun.value; const k = Math.min(blockH * 0.35 / Math.max(s.y, 0.25), 6);
+  floorU.uShOff.value.set(-s.x * k, -s.z * k);
+}
+function setEx() {
+  const prev = st.ex;
+  st.ex = +$('#exag').value; U.uEx.value = st.ex; U.uBaseY.value = baseY(); U.uMaxY.value = maxY();
+  floor.position.y = baseY() - 0.01;
+  $('#exagOut').textContent = st.ex.toFixed(1).replace('.', ',') + '×';
+  // keep the camera at the same height above the scaled terrain
+  if (prev && prev !== st.ex) camera.position.y *= st.ex / prev;
+  setSun(); labelsDirty = true;
+}
+function setCut(v) {
+  if (+v <= 0) { st.cut = 1e6; $('#cutOut').textContent = 'aus'; }
+  else {
+    st.cut = pzMax - (+v / 100) * (pzMax - pzMin) - 1e-5;
+    $('#cutOut').textContent = (lat0 - st.cut / kmPerDeg).toFixed(2).replace('.', ',') + '° N';
+  }
+  U.uCut.value = st.cut; buildCut(st.cut); cutDirty = false; labelsDirty = true;
+}
+$('#sunAz').addEventListener('input', setSun); $('#sunEl').addEventListener('input', setSun);
+$('#exag').addEventListener('input', setEx);
+$('#cut').addEventListener('input', e => setCut(e.target.value));
+function setMode(m) { st.mode = m; U.uMode.value = m; $('#modeRelief').setAttribute('aria-pressed', m === 0); $('#modeGeo').setAttribute('aria-pressed', m === 1); }
+$('#modeRelief').addEventListener('click', () => setMode(0)); $('#modeGeo').addEventListener('click', () => setMode(1));
+$('#showSat').addEventListener('change', e => { st.sat = e.target.checked; U.uSatOn.value = st.sat ? 1 : 0; });
+showCastles.addEventListener('change', () => labelsDirty = true); showNames.addEventListener('change', () => labelsDirty = true);
+$('#toggleBar').addEventListener('click', () => { const o = $('#bar').classList.toggle('open'); $('#toggleBar').setAttribute('aria-expanded', o); });
+
+/* ---------- click select + hover tooltip ---------- */
+const tip = $('#tip');
+function onClick(cx, cy) {
+  const hit = pick(cx, cy);
+  if (!hit) return;
+  const d = describeHit(hit), hr = Math.round(d.h);
+  const where = d.surface ? `An der Oberfläche bei ${hr} m. Darüber liegt eine dünne Bodendecke (${LAYERS[soilOf(d.layer)].short}).`
+    : d.soil ? 'Bodenschicht an der Schnittkante (stark überhöht dargestellt).'
+    : `Schnittkante bei ${Math.abs(hr)} m ${hr < 0 ? 'unter' : 'über'} dem Meeresspiegel.`;
+  selectLayer(d.layer, where);
+}
+let hoverReq = null;
+renderer.domElement.addEventListener('pointermove', e => {
+  if (e.pointerType !== 'mouse' || e.buttons) { tip.style.display = 'none'; return; }
+  if (hoverReq) return;
+  hoverReq = requestAnimationFrame(() => {
+    hoverReq = null;
+    const hit = pick(e.clientX, e.clientY);
+    if (!hit) { tip.style.display = 'none'; return; }
+    const d = describeHit(hit);
+    tip.innerHTML = `<b>${LAYERS[d.layer].name}</b> <span>${d.surface ? 'Oberfläche · ' : ''}${`${Math.round(d.h)} m`.replace('-', '−')}</span>`;
+    tip.style.display = 'block';
+    tip.style.transform = `translate(${e.clientX + 14}px, ${e.clientY + 14}px)`;
+  });
+});
+renderer.domElement.addEventListener('pointerleave', () => tip.style.display = 'none');
+
+/* ---------- loop ---------- */
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight, narrow = innerWidth <= 760;
+  renderer.setSize(w, h, false); camera.aspect = w / h;
+  // keep the model centred in the free area next to the panel (desktop) or above the sheet (phone)
+  camera.setViewOffset(w, h, narrow ? 0 : 190, narrow ? h * 0.18 : 50, w, h);
+  camera.updateProjectionMatrix(); labelsDirty = true;
+}
+addEventListener('resize', resize);
+const needle = $('#needle');
+let lastT = performance.now(), wallsAt = 0;
+const _f = new THREE.Vector3();
+function frame(now) {
+  const dt = Math.min(now - lastT, 100); lastT = now;
+  stepFly(now); nav.update(dt);
+  camera.updateMatrixWorld();
+  selectTiles(now);
+  if (wallsDirty && now - wallsAt > 250) { updateWalls(); wallsDirty = false; wallsAt = now; labelsDirty = true; }
+  if (cutDirty && st.cut < 1e5 && now - wallsAt > 120) { buildCut(st.cut); cutDirty = false; }
+  renderer.render(scene, camera);
+  updateLabels();
+  _f.set(0, 0, -1).applyQuaternion(camera.quaternion);
+  needle.style.transform = `rotate(${-Math.atan2(_f.x, -_f.z)}rad)`;
+  requestAnimationFrame(frame);
+}
+if (innerWidth <= 760) showNames.checked = false;
+setEx(); setSun(); setCut(0); setTab('layers'); resize();
+$('#loading').remove();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
